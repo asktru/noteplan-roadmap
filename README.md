@@ -85,6 +85,12 @@ tasks.
   (becomes a child); drop near the *top* or *bottom* edge to reorder among
   siblings. `roadmap_parent` and `roadmap_index` are rewritten on the affected
   notes.
+- **Right-click a project row** — opens a context menu:
+  - *Add task at bottom* / *Add task at top* — prompts for a title and
+    appends or prepends an open task to the project's note.
+  - *Add subproject* — prompts for a title, creates a new note in the
+    same folder, and sets its `roadmap` + `roadmap_parent` to nest under
+    the current project. Inherits `icon-color` if set.
 
 ### Toolbar
 

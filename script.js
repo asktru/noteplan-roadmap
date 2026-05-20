@@ -875,6 +875,14 @@ function getInlineCSS() {
     '.rm-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(60px); padding: 10px 18px; border-radius: 8px; background: var(--rm-bg-elevated); color: var(--rm-text); border: 1px solid var(--rm-border-strong); font-size: 12px; opacity: 0; transition: all 0.25s; z-index: 200; pointer-events: none; box-shadow: 0 6px 18px rgba(0,0,0,0.35); }\n' +
     '.rm-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }\n' +
 
+    /* CONTEXT MENU */
+    '.rm-context-menu { position: fixed; min-width: 200px; padding: 4px; background: var(--rm-bg-elevated); border: 1px solid var(--rm-border-strong); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); display: none; z-index: 500; }\n' +
+    '.rm-context-menu.open { display: block; }\n' +
+    '.rm-context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: none; background: transparent; color: var(--rm-text); cursor: pointer; font-size: 12px; text-align: left; border-radius: 4px; font-family: inherit; }\n' +
+    '.rm-context-menu button:hover { background: var(--rm-accent-soft); color: var(--rm-accent); }\n' +
+    '.rm-context-menu button i { width: 14px; text-align: center; opacity: 0.7; }\n' +
+    '.rm-context-menu hr { border: none; border-top: 1px solid var(--rm-border); margin: 4px 2px; }\n' +
+
     /* EMPTY STATE */
     '.rm-empty-canvas { padding: 40px; text-align: center; color: var(--rm-text-muted); font-size: 13px; line-height: 1.7; }\n' +
     '.rm-empty-canvas h2 { font-size: 16px; margin-bottom: 12px; color: var(--rm-text); }\n' +
@@ -1015,6 +1023,12 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
     '  </div>\n' +
     '  <div class="rm-tooltip" id="rmTooltip"></div>\n' +
     '  <div class="rm-toast" id="rmToast"></div>\n' +
+    '  <div class="rm-context-menu" id="rmContextMenu" role="menu">\n' +
+    '    <button data-action="appendTask"><i class="fa-solid fa-plus"></i> Add task at bottom</button>\n' +
+    '    <button data-action="prependTask"><i class="fa-solid fa-arrow-turn-up"></i> Add task at top</button>\n' +
+    '    <hr>\n' +
+    '    <button data-action="addSubproject"><i class="fa-solid fa-folder-plus"></i> Add subproject</button>\n' +
+    '  </div>\n' +
     '  <script>var receivingPluginID="asktru.Roadmap";\nvar ROADMAP_DATA=' + dataJSON + ';\n<\/script>\n' +
     '  <script type="text/javascript" src="roadmapEvents.js"><\/script>\n' +
     '  <script type="text/javascript" src="../np.Shared/pluginToHTMLCommsBridge.js"><\/script>\n' +
@@ -1158,6 +1172,69 @@ async function onMessageFromHTMLView(actionType, data) {
           s.collapsedIds = JSON.stringify(list);
           DataStore.settings = s;
         } catch (e) { console.log('Roadmap: toggleCollapse error: ' + e); }
+        await pushRefresh();
+        break;
+      }
+
+      case 'appendTask':
+      case 'prependTask': {
+        var note = findNoteByRoadmapId(msg.id) || findNoteByFilename(msg.filename);
+        if (!note) break;
+        await CommandBar.onMainThread();
+        var title = await CommandBar.showInput('Task title', "Add '%@'");
+        if (title && String(title).trim()) {
+          var content = String(title).trim();
+          if (actionType === 'appendTask') note.appendParagraph(content, 'open');
+          else note.prependParagraph(content, 'open');
+          try { DataStore.updateCache(note, true); } catch (e) { }
+        }
+        await pushRefresh();
+        break;
+      }
+
+      case 'addSubproject': {
+        var parentNote = findNoteByRoadmapId(msg.id) || findNoteByFilename(msg.filename);
+        if (!parentNote) break;
+        var parentFm = readFrontmatter(parentNote);
+        var parentId = String(parentFm.roadmap || '').trim();
+        if (parentId === 'true') parentId = (parentNote.title || '').trim();
+        if (!parentId) parentId = msg.id || '';
+
+        await CommandBar.onMainThread();
+        var subTitle = await CommandBar.showInput('Subproject title', "Create '%@'");
+        if (!subTitle || !String(subTitle).trim()) { await pushRefresh(); break; }
+        subTitle = String(subTitle).trim();
+
+        // Derive a unique roadmap id from the title (slug)
+        var slug = subTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        if (!slug) slug = 'subproject-' + Date.now();
+        var existing = collectRoadmapItems().items;
+        var taken = {};
+        for (var i = 0; i < existing.length; i++) taken[existing[i].id] = true;
+        var unique = slug, n = 2;
+        while (taken[unique]) { unique = slug + '-' + n; n++; }
+
+        // Place the new note in the parent's folder ("/" for root)
+        var pf = String(parentNote.filename || '');
+        var folder = pf.indexOf('/') >= 0 ? pf.replace(/\/[^/]+$/, '') : '/';
+        if (!folder) folder = '/';
+
+        // Inherit the parent's icon-color if it was set, so the subproject
+        // reads as part of the same visual cluster
+        var inheritColor = parentFm['icon-color'] || parentFm['icon_color'] || '';
+        var fmLines = ['title: ' + subTitle, 'roadmap: ' + unique, 'roadmap_parent: ' + parentId];
+        if (inheritColor) fmLines.push('icon-color: ' + inheritColor);
+        var noteContent = '---\n' + fmLines.join('\n') + '\n---\n\n# ' + subTitle + '\n';
+
+        var newFilename = null;
+        try {
+          newFilename = DataStore.newNoteWithContent(noteContent, folder, subTitle + '.md');
+        } catch (e) {
+          console.log('Roadmap: newNoteWithContent failed: ' + e);
+        }
+        if (newFilename) {
+          try { DataStore.updateCache(findNoteByFilename(newFilename), true); } catch (e) { }
+        }
         await pushRefresh();
         break;
       }

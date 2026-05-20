@@ -994,6 +994,55 @@ var onMessageFromPlugin;
   // SIDEBAR CLICK → SCROLL TO BAR
   // ============================================
 
+  // ============================================
+  // SIDEBAR CONTEXT MENU (right-click on project rows)
+  // ============================================
+
+  function showContextMenu(x, y, ctx) {
+    var menu = document.getElementById('rmContextMenu');
+    if (!menu) return;
+    menu.dataset.targetId = ctx.id || '';
+    menu.dataset.targetFilename = ctx.filename || '';
+    menu.classList.add('open');
+    // Position; clamp to viewport
+    var rect = menu.getBoundingClientRect();
+    var maxX = window.innerWidth - rect.width - 6;
+    var maxY = window.innerHeight - rect.height - 6;
+    menu.style.left = Math.min(x, maxX) + 'px';
+    menu.style.top = Math.min(y, maxY) + 'px';
+  }
+
+  function hideContextMenu() {
+    var menu = document.getElementById('rmContextMenu');
+    if (menu) menu.classList.remove('open');
+  }
+
+  function onSidebarContextMenu(ev) {
+    var row = ev.target.closest('.rm-sidebar-row');
+    if (!row) return;
+    if (row.getAttribute('data-kind') !== 'project') return;
+    ev.preventDefault();
+    hideTooltip();
+    showContextMenu(ev.clientX, ev.clientY, {
+      id: row.getAttribute('data-roadmap-id'),
+      filename: row.getAttribute('data-filename'),
+    });
+  }
+
+  function onContextMenuClick(ev) {
+    var btn = ev.target.closest('button[data-action]');
+    if (!btn) return;
+    var menu = document.getElementById('rmContextMenu');
+    if (!menu) return;
+    var action = btn.getAttribute('data-action');
+    var payload = {
+      id: menu.dataset.targetId,
+      filename: menu.dataset.targetFilename,
+    };
+    hideContextMenu();
+    sendMessageToPlugin(action, JSON.stringify(payload));
+  }
+
   function onSidebarMouseMove(ev) {
     if (sidebarDrag) return;
     var row = ev.target.closest('.rm-sidebar-row');
@@ -1308,6 +1357,7 @@ var onMessageFromPlugin;
       sidebar.addEventListener('click', onSidebarClick);
       sidebar.addEventListener('mousemove', onSidebarMouseMove);
       sidebar.addEventListener('mouseleave', hideTooltip);
+      sidebar.addEventListener('contextmenu', onSidebarContextMenu);
       // HTML5 DnD for sidebar reparent/reorder
       sidebar.addEventListener('dragstart', onSidebarDragStart);
       sidebar.addEventListener('dragover', onSidebarDragOver);
@@ -1315,6 +1365,19 @@ var onMessageFromPlugin;
       sidebar.addEventListener('drop', onSidebarDrop);
       sidebar.addEventListener('dragend', onSidebarDragEnd);
     }
+
+    // Context menu wiring (one global click dismisses, one on the menu acts)
+    var ctxMenu = document.getElementById('rmContextMenu');
+    if (ctxMenu) ctxMenu.addEventListener('click', onContextMenuClick);
+    document.addEventListener('mousedown', function (ev) {
+      var inside = ev.target.closest('#rmContextMenu');
+      if (!inside) hideContextMenu();
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') hideContextMenu();
+    });
+    var canvasWrapForCtx = document.getElementById('rmCanvasWrap');
+    if (canvasWrapForCtx) canvasWrapForCtx.addEventListener('scroll', hideContextMenu);
 
     // Sidebar resize
     var sidebarEl = document.getElementById('rmSidebar');
