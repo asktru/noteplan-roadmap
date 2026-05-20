@@ -912,8 +912,9 @@ function getInlineCSS() {
     '.rm-color-grid { display: grid; grid-template-columns: repeat(8, 20px); gap: 4px; padding: 4px 8px 6px; }\n' +
     '.rm-color-swatch { width: 20px; height: 20px; border-radius: 4px; border: 1.5px solid transparent; cursor: pointer; padding: 0; font-size: 9px; display: flex; align-items: center; justify-content: center; }\n' +
     '.rm-color-swatch:hover { transform: scale(1.18); }\n' +
-    '.rm-color-swatch.clear { background: transparent; border-style: dashed; border-color: var(--rm-text-faint); color: var(--rm-text-faint); }\n' +
-    '.rm-color-swatch.clear:hover { color: var(--rm-text); border-color: var(--rm-text); }\n' +
+    '.rm-color-swatch.clear { background: transparent; border-color: var(--rm-text-faint); position: relative; overflow: hidden; }\n' +
+    '.rm-color-swatch.clear::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1.5px; background: var(--rm-danger); transform: rotate(-45deg); transform-origin: center; pointer-events: none; }\n' +
+    '.rm-color-swatch.clear:hover { border-color: var(--rm-text); }\n' +
     '.rm-color-swatch.selected { box-shadow: 0 0 0 2px var(--rm-bg-elevated), 0 0 0 4px var(--rm-text); }\n' +
 
     /* EMPTY STATE */
@@ -1064,7 +1065,7 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
     '    <hr>\n' +
     '    <div class="rm-color-header">Color</div>\n' +
     '    <div class="rm-color-grid" id="rmColorGrid">\n' +
-    '      <button class="rm-color-swatch clear" data-color="" title="No color"><i class="fa-solid fa-ban"></i></button>\n' +
+    '      <button class="rm-color-swatch clear" data-color="" title="No color"></button>\n' +
          buildPickerSwatchesHTML() +
     '    </div>\n' +
     '  </div>\n' +
