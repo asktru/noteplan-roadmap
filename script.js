@@ -671,6 +671,36 @@ function findNoteByRoadmapId(id) {
   return null;
 }
 
+// Walk the roadmap tree starting from `rootId` and return all descendant
+// project ids (excluding the root itself). Used to propagate properties like
+// `icon-color` down a subtree in one user action.
+function collectDescendantProjectIds(rootId) {
+  if (!rootId) return [];
+  // Build parent → children id map once from the current data
+  var data = collectRoadmapItems();
+  var items = data.items || [];
+  var childrenOf = {};
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    if (it.kind !== 'project') continue;
+    var pid = it.parentId || '';
+    if (!childrenOf[pid]) childrenOf[pid] = [];
+    childrenOf[pid].push(it.id);
+  }
+  var out = [];
+  var stack = (childrenOf[rootId] || []).slice();
+  var seen = {};
+  while (stack.length) {
+    var id = stack.shift();
+    if (seen[id]) continue; // guard against malformed cycles
+    seen[id] = true;
+    out.push(id);
+    var kids = childrenOf[id] || [];
+    for (var k = 0; k < kids.length; k++) stack.push(kids[k]);
+  }
+  return out;
+}
+
 function findNoteByFilename(filename) {
   var notes = DataStore.projectNotes || [];
   for (var i = 0; i < notes.length; i++) {
@@ -1243,7 +1273,18 @@ async function onMessageFromHTMLView(actionType, data) {
       case 'setColor': {
         var nC = findNoteByRoadmapId(msg.id) || findNoteByFilename(msg.filename);
         if (!nC) break;
-        writeFrontmatterPatch(nC, { 'icon-color': msg.color || '' });
+        var newColor = msg.color || '';
+        // Apply to the target note plus every descendant project so a parent
+        // colors its whole subtree in one action.
+        var targets = [nC];
+        var descIds = collectDescendantProjectIds(msg.id);
+        for (var di = 0; di < descIds.length; di++) {
+          var dNote = findNoteByRoadmapId(descIds[di]);
+          if (dNote) targets.push(dNote);
+        }
+        for (var ti = 0; ti < targets.length; ti++) {
+          writeFrontmatterPatch(targets[ti], { 'icon-color': newColor });
+        }
         await pushRefresh();
         break;
       }
