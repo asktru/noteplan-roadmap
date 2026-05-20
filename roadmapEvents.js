@@ -1028,19 +1028,44 @@ var onMessageFromPlugin;
   // SIDEBAR CONTEXT MENU (right-click on project rows)
   // ============================================
 
+  // ctx = { kind: 'sidebar' | 'bar-project' | 'bar-task', id, filename,
+  //         lineIndex? (for tasks), item }
   function showContextMenu(x, y, ctx) {
     var menu = document.getElementById('rmContextMenu');
     if (!menu) return;
     menu.dataset.targetId = ctx.id || '';
     menu.dataset.targetFilename = ctx.filename || '';
+    menu.dataset.targetLineIndex = (ctx.lineIndex != null) ? String(ctx.lineIndex) : '';
 
-    // Highlight the active color swatch (search by raw colorName on the item)
+    // First pass: hide/show items by their declared contexts
+    var elements = menu.querySelectorAll('[data-ctx]');
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      var ctxList = el.getAttribute('data-ctx').split(/\s+/);
+      el.style.display = (ctxList.indexOf(ctx.kind) >= 0) ? '' : 'none';
+    }
+
+    // Second pass: hide items whose `data-needs` precondition isn't met
+    var flags = {};
+    if (ctx.item) {
+      flags['start'] = !!ctx.item.start && !ctx.item.ephemeralStart;
+      flags['end'] = !!ctx.item.end && !ctx.item.ephemeralEnd;
+      flags['due'] = !!ctx.item.due;
+      flags['defer'] = !!ctx.item.defer;
+      flags['any-date'] = flags['start'] || flags['end'] || flags['due'] || flags['defer'];
+      flags['scheduled'] = !!ctx.item.scheduled;
+    }
+    var needsEls = menu.querySelectorAll('[data-needs]');
+    for (var j = 0; j < needsEls.length; j++) {
+      var ne = needsEls[j];
+      if (ne.style.display === 'none') continue; // already hidden by ctx mismatch
+      if (!flags[ne.getAttribute('data-needs')]) ne.style.display = 'none';
+    }
+
+    // Highlight the active color swatch (only relevant for sidebar / bar-project)
     var swatches = menu.querySelectorAll('.rm-color-swatch');
     for (var s = 0; s < swatches.length; s++) swatches[s].classList.remove('selected');
-    var current = '';
-    for (var i = 0; i < allItems.length; i++) {
-      if (allItems[i].id === ctx.id) { current = allItems[i].colorName || ''; break; }
-    }
+    var current = ctx.item ? (ctx.item.colorName || '') : '';
     for (var s2 = 0; s2 < swatches.length; s2++) {
       if (swatches[s2].getAttribute('data-color') === current) {
         swatches[s2].classList.add('selected');
@@ -1068,10 +1093,39 @@ var onMessageFromPlugin;
     if (row.getAttribute('data-kind') !== 'project') return;
     ev.preventDefault();
     hideTooltip();
+    var id = row.getAttribute('data-roadmap-id');
+    var item = lookupItemById(id);
     showContextMenu(ev.clientX, ev.clientY, {
-      id: row.getAttribute('data-roadmap-id'),
+      kind: 'sidebar',
+      id: id,
       filename: row.getAttribute('data-filename'),
+      item: item,
     });
+  }
+
+  function onCanvasContextMenu(ev) {
+    var bar = ev.target.closest('.rm-bar');
+    if (!bar) return;
+    ev.preventDefault();
+    var id = bar.getAttribute('data-id');
+    var item = lookupItemById(id);
+    if (!item) return;
+    hideTooltip();
+    showContextMenu(ev.clientX, ev.clientY, {
+      kind: item.kind === 'task' ? 'bar-task' : 'bar-project',
+      id: id,
+      filename: item.filename,
+      lineIndex: item.lineIndex,
+      item: item,
+    });
+  }
+
+  function lookupItemById(id) {
+    if (!id) return null;
+    for (var i = 0; i < allItems.length; i++) {
+      if (allItems[i].id === id) return allItems[i];
+    }
+    return null;
   }
 
   function onContextMenuClick(ev) {
@@ -1095,9 +1149,10 @@ var onMessageFromPlugin;
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     hideContextMenu();
-    sendMessageToPlugin(action, JSON.stringify({
-      id: targetId, filename: targetFilename,
-    }));
+    var payload = { id: targetId, filename: targetFilename };
+    var li = menu.dataset.targetLineIndex;
+    if (li !== '') payload.lineIndex = li;
+    sendMessageToPlugin(action, JSON.stringify(payload));
   }
 
   function onSidebarMouseMove(ev) {
@@ -1410,6 +1465,7 @@ var onMessageFromPlugin;
       rowsEl.addEventListener('mousedown', onCanvasMouseDown);
       rowsEl.addEventListener('mousemove', onCanvasMouseMove);
       rowsEl.addEventListener('mouseleave', hideTooltip);
+      rowsEl.addEventListener('contextmenu', onCanvasContextMenu);
     }
     if (depsEl) {
       depsEl.addEventListener('click', onDepClick);
