@@ -4,6 +4,8 @@ A frontmatter-driven Gantt chart for NotePlan. Drop a few keys into any project
 note and it shows up on a unified timeline — with dependencies, deadlines,
 deferred starts, and live progress derived from your tasks.
 
+![Roadmap plugin screenshot](screenshot.png)
+
 ## Quick start
 
 1. Install the plugin and pin **Roadmap** from the sidebar (or run `/Roadmap`).
