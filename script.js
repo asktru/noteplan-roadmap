@@ -617,7 +617,7 @@ function collectRoadmapItems() {
     if (raw[ci].kind === 'task') { nTask++; if (raw[ci].scheduled) nScheduled++; }
     else { nProj++; if (raw[ci].parentId) nChild++; }
   }
-  console.log('Roadmap: collected ' + nProj + ' projects (' + nChild + ' with parent), ' + nTask + ' tasks (' + nScheduled + ' scheduled). Visible: ' + visible.length);
+  console.log('Roadmap: collected ' + nProj + ' projects (' + nChild + ' with parent), ' + nTask + ' tasks (' + nScheduled + ' scheduled).');
 
   return {
     items: ordered,
