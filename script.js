@@ -305,6 +305,25 @@ var TW_PALETTE = (function () {
   return out;
 })();
 
+// Curated swatch list for the color picker — 22 Tailwind hues at shade 500.
+// Order roughly follows the color wheel (warm → cool → neutral).
+var PICKER_SWATCHES = [
+  'red-500', 'orange-500', 'amber-500', 'yellow-500', 'lime-500', 'green-500',
+  'emerald-500', 'teal-500', 'cyan-500', 'sky-500', 'blue-500', 'indigo-500',
+  'violet-500', 'purple-500', 'fuchsia-500', 'pink-500', 'rose-500',
+  'slate-500', 'gray-500', 'zinc-500', 'neutral-500', 'stone-500',
+];
+
+function buildPickerSwatchesHTML() {
+  var html = '';
+  for (var i = 0; i < PICKER_SWATCHES.length; i++) {
+    var name = PICKER_SWATCHES[i];
+    var hex = TW_PALETTE[name] || '#888';
+    html += '<button class="rm-color-swatch" data-color="' + name + '" title="' + name + '" style="background:' + hex + '"></button>';
+  }
+  return html;
+}
+
 function resolveColor(value) {
   if (!value) return '';
   var s = String(value).trim().toLowerCase();
@@ -359,9 +378,15 @@ function buildProjectItem(note, fm) {
     .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
 
   var progress = computeProgress(note, fm);
-  // NotePlan's built-in `icon-color` (Tailwind name or hex); used to color
-  // this project's bar (and its tasks' pills) on the roadmap.
-  var color = resolveColor(fm['icon-color'] || fm['icon_color'] || fm.color);
+  // NotePlan's built-in `icon-color` (Tailwind name or hex). We keep both the
+  // raw key (so the picker can highlight the active swatch) and the resolved
+  // hex (so the renderer can paint the bar without re-resolving).
+  var rawColor = String(fm['icon-color'] || fm['icon_color'] || fm.color || '').trim().toLowerCase();
+  if ((rawColor.charAt(0) === '"' && rawColor.charAt(rawColor.length - 1) === '"') ||
+    (rawColor.charAt(0) === "'" && rawColor.charAt(rawColor.length - 1) === "'")) {
+    rawColor = rawColor.substring(1, rawColor.length - 1).trim();
+  }
+  var color = resolveColor(rawColor);
 
   return {
     kind: 'project',
@@ -378,6 +403,7 @@ function buildProjectItem(note, fm) {
     progressExplicit: fm.progress != null && fm.progress !== '',
     prerequisites: prereqs,
     color: color,
+    colorName: rawColor,
     hasStart: !!start, hasEnd: !!end, hasDue: !!due, hasDefer: !!defer,
   };
 }
@@ -882,6 +908,13 @@ function getInlineCSS() {
     '.rm-context-menu button:hover { background: var(--rm-accent-soft); color: var(--rm-accent); }\n' +
     '.rm-context-menu button i { width: 14px; text-align: center; opacity: 0.7; }\n' +
     '.rm-context-menu hr { border: none; border-top: 1px solid var(--rm-border); margin: 4px 2px; }\n' +
+    '.rm-color-header { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--rm-text-faint); padding: 4px 10px 2px; }\n' +
+    '.rm-color-grid { display: grid; grid-template-columns: repeat(8, 20px); gap: 4px; padding: 4px 8px 6px; }\n' +
+    '.rm-color-swatch { width: 20px; height: 20px; border-radius: 4px; border: 1.5px solid transparent; cursor: pointer; padding: 0; font-size: 9px; display: flex; align-items: center; justify-content: center; }\n' +
+    '.rm-color-swatch:hover { transform: scale(1.18); }\n' +
+    '.rm-color-swatch.clear { background: transparent; border-style: dashed; border-color: var(--rm-text-faint); color: var(--rm-text-faint); }\n' +
+    '.rm-color-swatch.clear:hover { color: var(--rm-text); border-color: var(--rm-text); }\n' +
+    '.rm-color-swatch.selected { box-shadow: 0 0 0 2px var(--rm-bg-elevated), 0 0 0 4px var(--rm-text); }\n' +
 
     /* EMPTY STATE */
     '.rm-empty-canvas { padding: 40px; text-align: center; color: var(--rm-text-muted); font-size: 13px; line-height: 1.7; }\n' +
@@ -1028,6 +1061,12 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
     '    <button data-action="prependTask"><i class="fa-solid fa-arrow-turn-up"></i> Add task at top</button>\n' +
     '    <hr>\n' +
     '    <button data-action="addSubproject"><i class="fa-solid fa-folder-plus"></i> Add subproject</button>\n' +
+    '    <hr>\n' +
+    '    <div class="rm-color-header">Color</div>\n' +
+    '    <div class="rm-color-grid" id="rmColorGrid">\n' +
+    '      <button class="rm-color-swatch clear" data-color="" title="No color"><i class="fa-solid fa-ban"></i></button>\n' +
+         buildPickerSwatchesHTML() +
+    '    </div>\n' +
     '  </div>\n' +
     '  <script>var receivingPluginID="asktru.Roadmap";\nvar ROADMAP_DATA=' + dataJSON + ';\n<\/script>\n' +
     '  <script type="text/javascript" src="roadmapEvents.js"><\/script>\n' +
@@ -1154,6 +1193,14 @@ async function onMessageFromHTMLView(actionType, data) {
       case 'reorderItems': {
         // msg: { parentId, orderedIds }
         reorderSiblings(msg.parentId || '', msg.orderedIds || []);
+        await pushRefresh();
+        break;
+      }
+
+      case 'setColor': {
+        var nC = findNoteByRoadmapId(msg.id) || findNoteByFilename(msg.filename);
+        if (!nC) break;
+        writeFrontmatterPatch(nC, { 'icon-color': msg.color || '' });
         await pushRefresh();
         break;
       }

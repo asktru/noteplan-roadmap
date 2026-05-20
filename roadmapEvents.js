@@ -1033,6 +1033,21 @@ var onMessageFromPlugin;
     if (!menu) return;
     menu.dataset.targetId = ctx.id || '';
     menu.dataset.targetFilename = ctx.filename || '';
+
+    // Highlight the active color swatch (search by raw colorName on the item)
+    var swatches = menu.querySelectorAll('.rm-color-swatch');
+    for (var s = 0; s < swatches.length; s++) swatches[s].classList.remove('selected');
+    var current = '';
+    for (var i = 0; i < allItems.length; i++) {
+      if (allItems[i].id === ctx.id) { current = allItems[i].colorName || ''; break; }
+    }
+    for (var s2 = 0; s2 < swatches.length; s2++) {
+      if (swatches[s2].getAttribute('data-color') === current) {
+        swatches[s2].classList.add('selected');
+        break;
+      }
+    }
+
     menu.classList.add('open');
     // Position; clamp to viewport
     var rect = menu.getBoundingClientRect();
@@ -1060,17 +1075,29 @@ var onMessageFromPlugin;
   }
 
   function onContextMenuClick(ev) {
-    var btn = ev.target.closest('button[data-action]');
-    if (!btn) return;
     var menu = document.getElementById('rmContextMenu');
     if (!menu) return;
+    var targetId = menu.dataset.targetId;
+    var targetFilename = menu.dataset.targetFilename;
+
+    // Color swatch click
+    var swatch = ev.target.closest('.rm-color-swatch');
+    if (swatch) {
+      var color = swatch.getAttribute('data-color') || '';
+      hideContextMenu();
+      sendMessageToPlugin('setColor', JSON.stringify({
+        id: targetId, filename: targetFilename, color: color,
+      }));
+      return;
+    }
+
+    var btn = ev.target.closest('button[data-action]');
+    if (!btn) return;
     var action = btn.getAttribute('data-action');
-    var payload = {
-      id: menu.dataset.targetId,
-      filename: menu.dataset.targetFilename,
-    };
     hideContextMenu();
-    sendMessageToPlugin(action, JSON.stringify(payload));
+    sendMessageToPlugin(action, JSON.stringify({
+      id: targetId, filename: targetFilename,
+    }));
   }
 
   function onSidebarMouseMove(ev) {
