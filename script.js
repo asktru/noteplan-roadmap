@@ -764,7 +764,7 @@ function getInlineCSS() {
 
     /* MAIN LAYOUT */
     '.rm-main { flex: 1; display: flex; overflow: hidden; min-height: 0; }\n' +
-    '.rm-sidebar { position: relative; width: var(--rm-sidebar-w); min-width: 140px; max-width: 800px; flex-shrink: 0; background: var(--rm-bg-card); border-right: 1px solid var(--rm-border); display: flex; flex-direction: column; overflow: hidden; }\n' +
+    '.rm-sidebar { position: relative; width: var(--rm-sidebar-w); min-width: 140px; max-width: 800px; flex-shrink: 0; background: var(--rm-bg-card); border-right: 1px solid var(--rm-border); display: flex; flex-direction: column; overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }\n' +
     '.rm-sidebar-resize { flex: 0 0 6px; margin-left: -3px; margin-right: -3px; cursor: col-resize; z-index: 6; align-self: stretch; }\n' +
     '.rm-sidebar-resize:hover, .rm-sidebar-resize.dragging { background: var(--rm-accent); opacity: 0.55; }\n' +
     'body.rm-resizing, body.rm-resizing * { cursor: col-resize !important; user-select: none !important; }\n' +
