@@ -1021,7 +1021,7 @@ function renderSidebarRowHTML(it, isCollapsed) {
   var iconStyle = it.color ? (' style="color:' + it.color + '"') : '';
   var icon = isTask
     ? '<i class="rm-row-icon fa-regular ' + (it.isDone ? 'fa-square-check' : (it.isChecklist ? 'fa-square' : 'fa-circle')) + '"' + iconStyle + '></i>'
-    : '<i class="rm-row-icon fa-solid fa-folder"' + iconStyle + '></i>';
+    : '<i class="rm-row-icon fa-solid fa-file-lines"' + iconStyle + '></i>';
   var dragAttr = !isTask ? ' draggable="true"' : '';
   var classes = 'rm-sidebar-row' + (isTask ? ' task' : ' project') + (it.isDone ? ' done' : '');
   var data = ' data-roadmap-id="' + esc(it.id) + '"' +
@@ -1095,7 +1095,7 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
     '    <button data-action="appendTask" data-ctx="project"><i class="fa-solid fa-plus"></i> Add task at bottom</button>\n' +
     '    <button data-action="prependTask" data-ctx="project"><i class="fa-solid fa-arrow-turn-up"></i> Add task at top</button>\n' +
     '    <hr data-ctx="project">\n' +
-    '    <button data-action="addSubproject" data-ctx="project"><i class="fa-solid fa-folder-plus"></i> Add subproject</button>\n' +
+    '    <button data-action="addSubproject" data-ctx="project"><i class="fa-solid fa-file-circle-plus"></i> Add subproject</button>\n' +
     /* Project: reset individual dates (only shown when set) and clear-all */
     '    <hr data-ctx="project" data-needs="any-date">\n' +
     '    <button data-action="resetStart" data-ctx="project" data-needs="start"><i class="fa-regular fa-circle-xmark"></i> Reset start</button>\n' +

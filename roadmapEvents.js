@@ -1406,7 +1406,7 @@ var onMessageFromPlugin;
     var iconStyle = it.color ? (' style="color:' + it.color + '"') : '';
     var icon = isTask
       ? '<i class="rm-row-icon fa-regular ' + (it.isDone ? 'fa-square-check' : (it.isChecklist ? 'fa-square' : 'fa-circle')) + '"' + iconStyle + '></i>'
-      : '<i class="rm-row-icon fa-solid fa-folder"' + iconStyle + '></i>';
+      : '<i class="rm-row-icon fa-solid fa-file-lines"' + iconStyle + '></i>';
     var dragAttr = !isTask ? ' draggable="true"' : '';
     var classes = 'rm-sidebar-row' + (isTask ? ' task' : ' project') + (it.isDone ? ' done' : '');
     var data = ' data-roadmap-id="' + escAttr(it.id) + '"' +
