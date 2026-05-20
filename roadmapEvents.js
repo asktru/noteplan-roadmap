@@ -317,32 +317,54 @@ var onMessageFromPlugin;
     var html = '';
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
-      html += '<div class="rm-row" data-row-index="' + i + '" style="top:' + (i * rowH) + 'px">';
+      var isTask = it.kind === 'task';
+      var rowClass = 'rm-row' + (isTask ? ' task-row' : '');
+      html += '<div class="' + rowClass + '" data-row-index="' + i + '" data-row-id="' + escAttr(it.id) + '" data-row-kind="' + (isTask ? 'task' : 'project') + '" style="top:' + (i * rowH) + 'px">';
 
-      var range = getItemRange(it);
-      if (range) {
-        var x1 = dateToX(range.start);
-        var x2 = dateToX(addDaysParts(range.end, 1)); // exclusive
-        var w = Math.max(dayPx * 0.6, x2 - x1);
-        var classes = 'rm-bar';
-        if (!it.hasStart || !it.hasEnd) classes += ' placeholder';
-        if (it.defer) {
-          var defp = partsFromISO(it.defer);
-          if (defp && comparePartsLT(todayParts(), defp)) classes += ' deferred';
+      if (isTask) {
+        if (it.scheduled) {
+          var sp = partsFromISO(it.scheduled);
+          if (sp) {
+            var tx1 = dateToX(sp);
+            var tw = Math.max(20, dayPx);
+            var tcls = 'rm-bar task' + (it.isDone ? ' done' : '') + (it.isChecklist ? ' checklist' : '');
+            var tbase = 'left:' + tx1 + 'px;width:' + tw + 'px';
+            html += '<div class="' + tcls + '" data-id="' + escAttr(it.id) + '" data-task="1" data-filename="' + escAttr(it.filename) + '" data-line-index="' + (it.lineIndex || 0) + '" data-row="' + i + '"' + barStyleForColor(it.color, tbase) + '>';
+            html += '<div class="rm-bar-label">' + escHTML(it.title) + '</div>';
+            html += '</div>';
+          }
+        } else {
+          html += '<div class="rm-row-ghost-label">Click a cell to schedule this task</div>';
         }
-        if (it.progress === 100) classes += ' complete';
-        if (isOverdue(it)) classes += ' overdue';
+      } else {
+        var range = getItemRange(it);
+        if (range) {
+          var x1 = dateToX(range.start);
+          var x2 = dateToX(addDaysParts(range.end, 1)); // exclusive
+          var w = Math.max(dayPx * 0.6, x2 - x1);
+          var classes = 'rm-bar';
+          if (!it.hasStart || !it.hasEnd) classes += ' placeholder';
+          if (it.defer) {
+            var defp = partsFromISO(it.defer);
+            if (defp && comparePartsLT(todayParts(), defp)) classes += ' deferred';
+          }
+          if (it.progress === 100) classes += ' complete';
+          if (isOverdue(it)) classes += ' overdue';
 
-        html += '<div class="' + classes + '" data-id="' + escAttr(it.id) + '" data-row="' + i + '" style="left:' + x1 + 'px;width:' + w + 'px">';
-        if (it.progress != null && it.progress > 0) {
-          var pw = Math.max(0, Math.min(100, it.progress));
-          html += '<div class="rm-bar-progress" style="width:' + pw + '%"></div>';
+          var pbase = 'left:' + x1 + 'px;width:' + w + 'px';
+          html += '<div class="' + classes + '" data-id="' + escAttr(it.id) + '" data-row="' + i + '"' + barStyleForColor(it.color, pbase) + '>';
+          if (it.progress != null && it.progress > 0) {
+            var pw = Math.max(0, Math.min(100, it.progress));
+            html += '<div class="rm-bar-progress"' + progressStyleForColor(it.color, pw) + '></div>';
+          }
+          html += '<div class="rm-bar-handle left" data-handle="left"></div>';
+          html += '<div class="rm-bar-handle right" data-handle="right"></div>';
+          html += '<div class="rm-bar-label">' + escHTML(it.title) + '</div>';
+          html += '<div class="rm-bar-link-dot" data-link-dot="1" title="Drag here (or Opt+drag the bar) to add a dependency"></div>';
+          html += '</div>';
+        } else {
+          html += '<div class="rm-row-ghost-label">Drag to schedule</div>';
         }
-        html += '<div class="rm-bar-handle left" data-handle="left"></div>';
-        html += '<div class="rm-bar-handle right" data-handle="right"></div>';
-        html += '<div class="rm-bar-label">' + escHTML(it.title) + (it.progress != null ? ' · ' + it.progress + '%' : '') + '</div>';
-        html += '<div class="rm-bar-link-dot" data-link-dot="1" title="Drag to a row to add a dependency"></div>';
-        html += '</div>';
       }
 
       // Due marker
@@ -390,44 +412,76 @@ var onMessageFromPlugin;
     var paths = '';
     var dayPx = ZOOM_CONFIG[zoom].dayPx;
 
+    // OmniPlan-style arrows: leave the source bar's right edge, turn vertically,
+    // and enter the target bar from its TOP edge (or BOTTOM when source is below).
+    // Bar geometry inside a row: project bar spans [row*rowH + 6, row*rowH + rowH - 6].
+    var BAR_INSET_Y = 6;
+    var STEP_OUT = 12;     // horizontal step out of the source before turning
+    var ENTER_INSET_X = 10; // how far into the target bar to enter (from its left)
+    var APPROACH_GAP = 10;  // vertical run just before the arrow tip
+    var ARROW_HALF = 5;
+    var ARROW_LEN = 7;
+
     for (var r = 0; r < items.length; r++) {
       var it = items[r];
       var preqs = it.prerequisites || [];
       if (!preqs.length) continue;
       var iRange = getItemRange(it);
       if (!iRange) continue;
-      var targetX = dateToX(iRange.start);
-      var targetY = r * rowH + rowH / 2;
+      var targetX_start = dateToX(iRange.start);
+      var targetTopY = r * rowH + BAR_INSET_Y;
+      var targetBotY = (r + 1) * rowH - BAR_INSET_Y;
 
       for (var p = 0; p < preqs.length; p++) {
         var preqId = preqs[p];
         var preq = idToItem[preqId];
-        if (!preq) {
-          // Unknown prereq → draw a small badge later? For now, skip drawing arrow.
-          continue;
-        }
+        if (!preq) continue;
         var preqRow = idToRow[preqId];
         var preqRange = getItemRange(preq);
         if (!preqRange) continue;
-        var sourceX = dateToX(addDaysParts(preqRange.end, 1));
-        var sourceY = preqRow * rowH + rowH / 2;
 
-        // Path: from source out to right, down/up, then in to target's left
-        var dx = Math.max(12, (targetX - sourceX) / 2);
-        var midX1 = sourceX + Math.max(8, Math.min(40, dx));
-        var midX2 = targetX - Math.max(8, Math.min(40, dx));
-        // Detect broken dep: prereq.end > target.start (timeline conflict)
+        var sourceX = dateToX(addDaysParts(preqRange.end, 1)); // right edge of source bar
+        var sourceMidY = preqRow * rowH + rowH / 2;
+        var sourceAbove = preqRow < r;
+        if (preqRow === r) continue; // skip self-row (shouldn't happen)
+
+        // X where the arrow enters the target bar
+        var enterX = targetX_start + ENTER_INSET_X;
+        // Out from source then descend/ascend; if target starts before source ends,
+        // route around to avoid crossing through the source bar.
+        var stepX = sourceX + STEP_OUT;
+        if (enterX < stepX) enterX = stepX;
+
+        // Arrow tip lands at the top (or bottom) edge of the target row's bar
+        var tipY = sourceAbove ? targetTopY : targetBotY;
+        var approachY = sourceAbove ? (tipY - APPROACH_GAP) : (tipY + APPROACH_GAP);
+
+        // Detect a broken dep (prereq ends on or after target's start)
         var broken = comparePartsLT(iRange.start, addDaysParts(preqRange.end, 1));
         var cls = 'rm-dep-path' + (broken ? ' broken' : '');
 
-        var d = 'M' + sourceX + ',' + sourceY +
-          ' L' + midX1 + ',' + sourceY +
-          ' L' + midX1 + ',' + targetY +
-          ' L' + (targetX - 6) + ',' + targetY;
+        // L-shaped path: out → vertical to just-before-tip → over to enterX → final approach
+        var d = 'M' + sourceX + ',' + sourceMidY +
+          ' L' + stepX + ',' + sourceMidY +
+          ' L' + stepX + ',' + approachY +
+          ' L' + enterX + ',' + approachY +
+          ' L' + enterX + ',' + tipY;
+
+        // Arrow polygon (filled triangle pointing toward the bar edge)
+        var arrowPoints;
+        if (sourceAbove) {
+          arrowPoints = enterX + ',' + tipY + ' ' +
+            (enterX - ARROW_HALF) + ',' + (tipY - ARROW_LEN) + ' ' +
+            (enterX + ARROW_HALF) + ',' + (tipY - ARROW_LEN);
+        } else {
+          arrowPoints = enterX + ',' + tipY + ' ' +
+            (enterX - ARROW_HALF) + ',' + (tipY + ARROW_LEN) + ' ' +
+            (enterX + ARROW_HALF) + ',' + (tipY + ARROW_LEN);
+        }
 
         paths += '<g class="rm-dep-group" data-target="' + escAttr(it.id) + '" data-source="' + escAttr(preqId) + '">';
         paths += '<path class="' + cls + '" d="' + d + '"></path>';
-        paths += '<polygon class="rm-dep-arrow" points="' + targetX + ',' + targetY + ' ' + (targetX - 8) + ',' + (targetY - 4) + ' ' + (targetX - 8) + ',' + (targetY + 4) + '"></polygon>';
+        paths += '<polygon class="rm-dep-arrow" points="' + arrowPoints + '"></polygon>';
         paths += '</g>';
       }
     }
@@ -486,6 +540,35 @@ var onMessageFromPlugin;
   }
 
   // ============================================
+  // COLOR HELPERS (per-bar colors from `icon-color` frontmatter)
+  // ============================================
+
+  function hexToRgba(hex, alpha) {
+    if (!hex) return '';
+    var h = String(hex).replace('#', '');
+    if (h.length === 3) {
+      h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
+    }
+    if (h.length > 6) h = h.substring(0, 6);
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return '';
+    var n = parseInt(h, 16);
+    var r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+  }
+
+  function barStyleForColor(color, base) {
+    // base = inline 'left: Xpx; width: Ypx;'; returns the full style attribute string
+    if (!color) return ' style="' + base + '"';
+    var bg = hexToRgba(color, 0.22);
+    var border = hexToRgba(color, 0.95);
+    return ' style="' + base + ';background-color:' + bg + ';border-color:' + border + '"';
+  }
+  function progressStyleForColor(color, widthPct) {
+    var fill = color ? hexToRgba(color, 0.55) : '';
+    return ' style="width:' + widthPct + '%' + (fill ? ';background-color:' + fill : '') + '"';
+  }
+
+  // ============================================
   // ESCAPING
   // ============================================
 
@@ -513,12 +596,18 @@ var onMessageFromPlugin;
     if (!t) return;
     var rows = '';
     function row(k, v) { return '<div class="rm-tooltip-row"><span class="k">' + escHTML(k) + '</span><span class="v">' + escHTML(v) + '</span></div>'; }
-    if (it.start) rows += row('Start', it.start);
-    if (it.end) rows += row('End', it.end);
-    if (it.due) rows += row('Due', it.due);
-    if (it.defer) rows += row('Defer', it.defer);
-    if (it.progress != null) rows += row('Progress', it.progress + '%' + (it.progressExplicit ? '' : ' (auto)'));
-    if (it.prerequisites && it.prerequisites.length) rows += row('Prereqs', it.prerequisites.join(', '));
+    if (it.kind === 'task') {
+      if (it.scheduled) rows += row('Scheduled', it.scheduled);
+      else rows += row('Scheduled', '— (drag a cell to set)');
+      if (it.isDone) rows += row('Status', 'Done');
+    } else {
+      if (it.start) rows += row('Start', it.start);
+      if (it.end) rows += row('End', it.end);
+      if (it.due) rows += row('Due', it.due);
+      if (it.defer) rows += row('Defer', it.defer);
+      if (it.progress != null) rows += row('Progress', it.progress + '%' + (it.progressExplicit ? '' : ' (auto)'));
+      if (it.prerequisites && it.prerequisites.length) rows += row('Prereqs', it.prerequisites.join(', '));
+    }
     t.innerHTML = '<div class="rm-tooltip-title">' + escHTML(it.title) + '</div>' + rows;
     t.classList.add('show');
     positionTooltip(ev);
@@ -555,6 +644,12 @@ var onMessageFromPlugin;
   // ============================================
   // DRAG & RESIZE
   // ============================================
+  // Three mouse-down origins:
+  //   1. The link dot on a project bar → start a dependency draft
+  //   2. A bar (project or task) → move or resize it
+  //   3. Empty area of a row → range-drag to schedule an unscheduled item
+
+  var rangeDrag = null; // { rowIdx, startX, item, anchorDate, endDate, el }
 
   function onCanvasMouseDown(ev) {
     var dot = ev.target.closest('[data-link-dot]');
@@ -566,26 +661,78 @@ var onMessageFromPlugin;
     }
     var handle = ev.target.closest('.rm-bar-handle');
     var bar = ev.target.closest('.rm-bar');
-    if (!bar) return;
+    if (bar) {
+      // Opt/Alt + drag on a project bar starts a dependency draft instead of
+      // moving the bar. Dependencies only originate from project bars.
+      if (ev.altKey && !bar.classList.contains('task')) {
+        startDepDraft(ev, bar);
+        return;
+      }
+      startBarDrag(ev, bar, handle);
+      return;
+    }
+    // Empty area — range-drag if this row's item is currently unscheduled,
+    // OR for any task row (lets you reschedule a task to a new cell).
+    var row = ev.target.closest('.rm-row');
+    if (!row) return;
+    var rowId = row.getAttribute('data-row-id');
+    var idx = indexOfId(rowId);
+    if (idx < 0) return;
+    var it = items[idx];
+    // For tasks: ignore — task rescheduling happens by dragging the existing
+    // bar, or by clicking a cell when the task has no bar yet.
+    if (it.kind === 'task') {
+      if (!it.scheduled) startTaskCellSchedule(ev, idx, row);
+      return;
+    }
+    // Projects with no range → range-drag to schedule
+    if (!getItemRange(it)) {
+      startRangeDrag(ev, idx, row);
+    }
+  }
 
+  function startBarDrag(ev, bar, handle) {
     ev.preventDefault();
     var id = bar.getAttribute('data-id');
-    var it = items[indexOfId(id)];
-    if (!it) return;
-    var range = getItemRange(it);
-    if (!range) return;
+    var idx = indexOfId(id);
+    if (idx < 0) return;
+    var it = items[idx];
 
+    var isTask = it.kind === 'task';
     var dayPx = ZOOM_CONFIG[zoom].dayPx;
-    drag = {
-      id: id,
-      mode: handle ? (handle.getAttribute('data-handle') === 'left' ? 'resize-left' : 'resize-right') : 'move',
-      startX: ev.clientX,
-      origStart: range.start,
-      origEnd: range.end,
-      bar: bar,
-      dayPx: dayPx,
-      moved: false,
-    };
+
+    if (isTask) {
+      // Tasks are single-cell — only "move", no resize.
+      if (!it.scheduled) return;
+      var sp = partsFromISO(it.scheduled);
+      drag = {
+        kind: 'task',
+        id: id,
+        filename: it.filename,
+        lineIndex: it.lineIndex,
+        mode: 'move',
+        startX: ev.clientX,
+        origStart: sp,
+        origEnd: sp,
+        bar: bar,
+        dayPx: dayPx,
+        moved: false,
+      };
+    } else {
+      var range = getItemRange(it);
+      if (!range) return;
+      drag = {
+        kind: 'project',
+        id: id,
+        mode: handle ? (handle.getAttribute('data-handle') === 'left' ? 'resize-left' : 'resize-right') : 'move',
+        startX: ev.clientX,
+        origStart: range.start,
+        origEnd: range.end,
+        bar: bar,
+        dayPx: dayPx,
+        moved: false,
+      };
+    }
     bar.classList.add('dragging');
     document.addEventListener('mousemove', onDragMove);
     document.addEventListener('mouseup', onDragEnd);
@@ -611,7 +758,6 @@ var onMessageFromPlugin;
       if (comparePartsLT(newEnd, drag.origStart)) newEnd = drag.origStart;
     }
 
-    // Optimistic visual update
     var x1 = dateToX(newStart);
     var x2 = dateToX(addDaysParts(newEnd, 1));
     drag.bar.style.left = x1 + 'px';
@@ -619,11 +765,14 @@ var onMessageFromPlugin;
     drag.pendingStart = newStart;
     drag.pendingEnd = newEnd;
 
-    // Update local items array for live dep recompute
     var idx = indexOfId(drag.id);
     if (idx >= 0) {
-      items[idx].start = partsToISO(newStart);
-      items[idx].end = partsToISO(newEnd);
+      if (drag.kind === 'task') {
+        items[idx].scheduled = partsToISO(newStart);
+      } else {
+        items[idx].start = partsToISO(newStart);
+        items[idx].end = partsToISO(newEnd);
+      }
     }
     renderDeps();
   }
@@ -634,17 +783,124 @@ var onMessageFromPlugin;
     if (!drag) return;
     drag.bar.classList.remove('dragging');
     if (drag.moved && drag.pendingStart && drag.pendingEnd) {
-      var patch = { id: drag.id };
-      if (drag.mode === 'move' || drag.mode === 'resize-left') patch.start = partsToISO(drag.pendingStart);
-      if (drag.mode === 'move' || drag.mode === 'resize-right') patch.end = partsToISO(drag.pendingEnd);
-      sendMessageToPlugin('updateDates', JSON.stringify(patch));
-      showToast('Updated dates · ' + partsToISO(drag.pendingStart) + ' → ' + partsToISO(drag.pendingEnd));
+      if (drag.kind === 'task') {
+        sendMessageToPlugin('scheduleTask', JSON.stringify({
+          filename: drag.filename,
+          lineIndex: drag.lineIndex,
+          date: partsToISO(drag.pendingStart),
+        }));
+        showToast('Rescheduled · ' + partsToISO(drag.pendingStart));
+      } else {
+        var patch = { id: drag.id };
+        if (drag.mode === 'move' || drag.mode === 'resize-left') patch.start = partsToISO(drag.pendingStart);
+        if (drag.mode === 'move' || drag.mode === 'resize-right') patch.end = partsToISO(drag.pendingEnd);
+        sendMessageToPlugin('updateDates', JSON.stringify(patch));
+        showToast('Updated dates · ' + partsToISO(drag.pendingStart) + ' → ' + partsToISO(drag.pendingEnd));
+      }
     } else if (!drag.moved) {
-      // Treat as click: open note
+      // Click: open underlying note
       var idx = indexOfId(drag.id);
       if (idx >= 0) sendMessageToPlugin('openNote', JSON.stringify({ filename: items[idx].filename, title: items[idx].title }));
     }
     drag = null;
+  }
+
+  // ============================================
+  // RANGE-DRAG SCHEDULING (empty project row)
+  // ============================================
+
+  function startRangeDrag(ev, rowIdx, row) {
+    ev.preventDefault();
+    var pt = eventToCanvasPoint(ev);
+    var dayPx = ZOOM_CONFIG[zoom].dayPx;
+    var startDate = xToDate(pt.x);
+    var el = document.createElement('div');
+    el.className = 'rm-range-select';
+    el.style.left = dateToX(startDate) + 'px';
+    el.style.width = dayPx + 'px';
+    row.appendChild(el);
+    rangeDrag = {
+      rowIdx: rowIdx,
+      itemId: items[rowIdx].id,
+      kind: 'project',
+      startDate: startDate,
+      endDate: startDate,
+      el: el,
+      moved: false,
+    };
+    document.addEventListener('mousemove', onRangeMove);
+    document.addEventListener('mouseup', onRangeEnd);
+  }
+
+  function startTaskCellSchedule(ev, rowIdx, row) {
+    ev.preventDefault();
+    var pt = eventToCanvasPoint(ev);
+    var dayPx = ZOOM_CONFIG[zoom].dayPx;
+    var startDate = xToDate(pt.x);
+    var el = document.createElement('div');
+    el.className = 'rm-range-select';
+    el.style.left = dateToX(startDate) + 'px';
+    el.style.width = dayPx + 'px';
+    row.appendChild(el);
+    rangeDrag = {
+      rowIdx: rowIdx,
+      itemId: items[rowIdx].id,
+      kind: 'task',
+      startDate: startDate,
+      endDate: startDate,
+      el: el,
+      moved: false,
+    };
+    document.addEventListener('mousemove', onRangeMove);
+    document.addEventListener('mouseup', onRangeEnd);
+  }
+
+  function onRangeMove(ev) {
+    if (!rangeDrag) return;
+    var pt = eventToCanvasPoint(ev);
+    var d = xToDate(pt.x);
+    // For tasks, lock the range to a single day (the latest hovered cell)
+    if (rangeDrag.kind === 'task') {
+      rangeDrag.startDate = d;
+      rangeDrag.endDate = d;
+    } else {
+      rangeDrag.endDate = d;
+    }
+    rangeDrag.moved = true;
+    var s = rangeDrag.startDate, e = rangeDrag.endDate;
+    if (comparePartsLT(e, s)) { var tmp = s; s = e; e = tmp; }
+    var x1 = dateToX(s);
+    var x2 = dateToX(addDaysParts(e, 1));
+    rangeDrag.el.style.left = x1 + 'px';
+    rangeDrag.el.style.width = Math.max(ZOOM_CONFIG[zoom].dayPx, x2 - x1) + 'px';
+  }
+
+  function onRangeEnd() {
+    document.removeEventListener('mousemove', onRangeMove);
+    document.removeEventListener('mouseup', onRangeEnd);
+    if (!rangeDrag) return;
+    var rd = rangeDrag;
+    rangeDrag = null;
+    if (rd.el && rd.el.parentNode) rd.el.parentNode.removeChild(rd.el);
+
+    if (rd.kind === 'task') {
+      var it = items[rd.rowIdx];
+      sendMessageToPlugin('scheduleTask', JSON.stringify({
+        filename: it.filename,
+        lineIndex: it.lineIndex,
+        date: partsToISO(rd.startDate),
+      }));
+      showToast('Scheduled · ' + partsToISO(rd.startDate));
+    } else {
+      var s = rd.startDate, e = rd.endDate;
+      if (comparePartsLT(e, s)) { var tmp = s; s = e; e = tmp; }
+      sendMessageToPlugin('updateDates', JSON.stringify({
+        id: rd.itemId,
+        start: partsToISO(s),
+        end: partsToISO(e),
+      }));
+      showToast('Scheduled · ' + partsToISO(s) + ' → ' + partsToISO(e));
+    }
   }
 
   // ============================================
@@ -687,10 +943,14 @@ var onMessageFromPlugin;
     if (!depDraft) return;
     var bar = ev.target.closest('.rm-bar');
     if (bar) {
-      var targetId = bar.getAttribute('data-id');
-      if (targetId && targetId !== depDraft.sourceId) {
-        sendMessageToPlugin('addPrerequisite', JSON.stringify({ id: targetId, prerequisite: depDraft.sourceId }));
-        showToast('Linked: ' + depDraft.sourceId + ' → ' + targetId);
+      if (bar.classList.contains('task')) {
+        showToast('Dependencies link projects, not tasks');
+      } else {
+        var targetId = bar.getAttribute('data-id');
+        if (targetId && targetId !== depDraft.sourceId) {
+          sendMessageToPlugin('addPrerequisite', JSON.stringify({ id: targetId, prerequisite: depDraft.sourceId }));
+          showToast('Linked: ' + depDraft.sourceId + ' → ' + targetId);
+        }
       }
     }
     depDraft = null;
@@ -730,31 +990,182 @@ var onMessageFromPlugin;
   // SIDEBAR CLICK → SCROLL TO BAR
   // ============================================
 
+  function onSidebarMouseMove(ev) {
+    if (sidebarDrag) return;
+    var row = ev.target.closest('.rm-sidebar-row');
+    if (!row) { hideTooltip(); return; }
+    // Skip if hover is over the chevron — keep the click hint
+    if (ev.target.closest('.rm-chev')) { hideTooltip(); return; }
+    var id = row.getAttribute('data-roadmap-id');
+    var idx = indexOfId(id);
+    if (idx < 0) { hideTooltip(); return; }
+    showTooltip(items[idx], ev);
+  }
+
   function onSidebarClick(ev) {
+    // Chevron expand/collapse takes precedence
+    var chev = ev.target.closest('.rm-chev');
+    if (chev) {
+      ev.stopPropagation();
+      var cid = chev.getAttribute('data-chev-id');
+      var willCollapse = !chev.classList.contains('collapsed');
+      sendMessageToPlugin('toggleCollapse', JSON.stringify({ id: cid, collapsed: willCollapse }));
+      return;
+    }
     var row = ev.target.closest('.rm-sidebar-row');
     if (!row) return;
     var id = row.getAttribute('data-roadmap-id');
     var filename = row.getAttribute('data-filename');
+    var kind = row.getAttribute('data-kind');
     if (ev.metaKey || ev.ctrlKey || ev.altKey) {
+      // For tasks, the underlying file is the same; opening still works.
       sendMessageToPlugin('openNote', JSON.stringify({ filename: filename }));
       return;
     }
     var idx = indexOfId(id);
     if (idx < 0) return;
-    var range = getItemRange(items[idx]);
+    var it = items[idx];
     var wrap = document.getElementById('rmCanvasWrap');
     if (!wrap) return;
     var targetX;
-    if (range) {
-      targetX = Math.max(0, dateToX(range.start) - 60);
+    if (kind === 'task' && it.scheduled) {
+      var sp = partsFromISO(it.scheduled);
+      targetX = Math.max(0, dateToX(sp) - 60);
     } else {
-      targetX = Math.max(0, dateToX(todayParts()) - 60);
+      var range = getItemRange(it);
+      if (range) targetX = Math.max(0, dateToX(range.start) - 60);
+      else targetX = Math.max(0, dateToX(todayParts()) - 60);
     }
     wrap.scrollTo({ left: targetX, top: idx * rowH, behavior: 'smooth' });
-    // highlight briefly
     document.querySelectorAll('.rm-sidebar-row.highlight').forEach(function (n) { n.classList.remove('highlight'); });
     row.classList.add('highlight');
     setTimeout(function () { row.classList.remove('highlight'); }, 1500);
+  }
+
+  // ============================================
+  // SIDEBAR DRAG-AND-DROP (reparent / reorder)
+  // ============================================
+  // Uses HTML5 native DnD. Project rows are draggable; tasks are not (they
+  // live alongside their note's tasks via paragraph order). Drop semantics:
+  //   - top-third of a row → insert before (same parent as target)
+  //   - bottom-third       → insert after (same parent as target)
+  //   - middle-third       → reparent into the target (becomes its child)
+
+  var sidebarDrag = null;
+
+  function onSidebarDragStart(ev) {
+    var row = ev.target.closest('.rm-sidebar-row');
+    if (!row || row.getAttribute('data-kind') !== 'project') { ev.preventDefault(); return; }
+    sidebarDrag = {
+      id: row.getAttribute('data-roadmap-id'),
+      parentId: row.getAttribute('data-parent-id') || '',
+    };
+    row.classList.add('dragging');
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = 'move';
+      try { ev.dataTransfer.setData('text/plain', sidebarDrag.id); } catch (e) { }
+    }
+  }
+
+  function clearDropIndicators() {
+    document.querySelectorAll('.rm-sidebar-row.drop-into, .rm-sidebar-row.drop-before, .rm-sidebar-row.drop-after')
+      .forEach(function (n) { n.classList.remove('drop-into', 'drop-before', 'drop-after'); });
+  }
+
+  function dropZoneFor(row, ev) {
+    var rect = row.getBoundingClientRect();
+    var rel = (ev.clientY - rect.top) / rect.height;
+    if (rel < 0.33) return 'before';
+    if (rel > 0.67) return 'after';
+    return 'into';
+  }
+
+  function isDescendantOf(itemId, ancestorId) {
+    // True iff itemId is a descendant of ancestorId in the current ordered tree
+    if (!ancestorId || itemId === ancestorId) return itemId === ancestorId;
+    var byId = {};
+    for (var i = 0; i < items.length; i++) byId[items[i].id] = items[i];
+    var cur = byId[itemId];
+    while (cur && cur.parentId) {
+      if (cur.parentId === ancestorId) return true;
+      cur = byId[cur.parentId];
+    }
+    return false;
+  }
+
+  function onSidebarDragOver(ev) {
+    if (!sidebarDrag) return;
+    var row = ev.target.closest('.rm-sidebar-row');
+    if (!row) return;
+    if (row.getAttribute('data-kind') === 'task') return; // can't drop on tasks
+    var targetId = row.getAttribute('data-roadmap-id');
+    if (targetId === sidebarDrag.id) return; // self
+    if (isDescendantOf(targetId, sidebarDrag.id)) return; // would orphan
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+    clearDropIndicators();
+    row.classList.add('drop-' + dropZoneFor(row, ev));
+  }
+
+  function onSidebarDragLeave(ev) {
+    var row = ev.target.closest('.rm-sidebar-row');
+    if (row) row.classList.remove('drop-into', 'drop-before', 'drop-after');
+  }
+
+  function onSidebarDrop(ev) {
+    if (!sidebarDrag) return;
+    var row = ev.target.closest('.rm-sidebar-row');
+    if (!row) { clearDropIndicators(); sidebarDrag = null; return; }
+    if (row.getAttribute('data-kind') === 'task') { clearDropIndicators(); sidebarDrag = null; return; }
+    var targetId = row.getAttribute('data-roadmap-id');
+    if (targetId === sidebarDrag.id || isDescendantOf(targetId, sidebarDrag.id)) {
+      clearDropIndicators(); sidebarDrag = null; return;
+    }
+    ev.preventDefault();
+    var zone = dropZoneFor(row, ev);
+    clearDropIndicators();
+
+    var newParentId = '';
+    if (zone === 'into') {
+      newParentId = targetId;
+    } else {
+      newParentId = row.getAttribute('data-parent-id') || '';
+    }
+
+    // Build the new ordered list of *project* siblings under newParentId
+    var byId = {};
+    for (var i = 0; i < items.length; i++) byId[items[i].id] = items[i];
+    var siblings = [];
+    for (var j = 0; j < items.length; j++) {
+      var it = items[j];
+      if (it.kind !== 'project') continue;
+      if ((it.parentId || '') !== newParentId) continue;
+      if (it.id === sidebarDrag.id) continue;
+      siblings.push(it.id);
+    }
+    // Find insert index
+    var draggedId = sidebarDrag.id;
+    if (zone === 'into') {
+      siblings.push(draggedId); // append as last child
+    } else {
+      var refIdx = siblings.indexOf(targetId);
+      if (refIdx < 0) refIdx = siblings.length;
+      if (zone === 'after') refIdx += 1;
+      siblings.splice(refIdx, 0, draggedId);
+    }
+
+    sendMessageToPlugin('reorderItems', JSON.stringify({
+      parentId: newParentId,
+      orderedIds: siblings,
+    }));
+    showToast('Moved · ' + draggedId);
+    sidebarDrag = null;
+  }
+
+  function onSidebarDragEnd() {
+    document.querySelectorAll('.rm-sidebar-row.dragging').forEach(function (n) { n.classList.remove('dragging'); });
+    clearDropIndicators();
+    sidebarDrag = null;
   }
 
   // ============================================
@@ -800,6 +1211,37 @@ var onMessageFromPlugin;
     }
   };
 
+  function renderSidebarRow(it, isCollapsed) {
+    var depth = (it.depth || 0) + (it.indents || 0);
+    var indent = depth * 14;
+    var isTask = it.kind === 'task';
+    var pTxt = '';
+    if (!isTask) pTxt = (it.progress == null) ? '—' : (it.progress + '%');
+    var chev;
+    if (it.hasChildren) {
+      chev = '<button class="rm-chev' + (isCollapsed ? ' collapsed' : '') + '" data-chev-id="' + escAttr(it.id) + '" title="Collapse/expand"><i class="fa-solid ' + (isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down') + '"></i></button>';
+    } else {
+      chev = '<span class="rm-chev-spacer"></span>';
+    }
+    var iconStyle = it.color ? (' style="color:' + it.color + '"') : '';
+    var icon = isTask
+      ? '<i class="rm-row-icon fa-regular ' + (it.isDone ? 'fa-square-check' : (it.isChecklist ? 'fa-square' : 'fa-circle')) + '"' + iconStyle + '></i>'
+      : '<i class="rm-row-icon fa-solid fa-folder"' + iconStyle + '></i>';
+    var dragAttr = !isTask ? ' draggable="true"' : '';
+    var classes = 'rm-sidebar-row' + (isTask ? ' task' : ' project') + (it.isDone ? ' done' : '');
+    var data = ' data-roadmap-id="' + escAttr(it.id) + '"' +
+      ' data-kind="' + (isTask ? 'task' : 'project') + '"' +
+      ' data-filename="' + escAttr(it.filename) + '"' +
+      (isTask ? ' data-line-index="' + (it.lineIndex || 0) + '"' : '') +
+      ' data-parent-id="' + escAttr(it.parentId || '') + '"';
+    var html = '<div class="' + classes + '"' + data + dragAttr + ' style="padding-left:' + (8 + indent) + 'px" title="' + escAttr(it.title) + '">';
+    html += chev + icon;
+    html += '<div class="rm-sidebar-row-title">' + escHTML(it.title) + '</div>';
+    if (pTxt) html += '<div class="rm-sidebar-row-progress">' + escHTML(pTxt) + '</div>';
+    html += '</div>';
+    return html;
+  }
+
   function reflowSidebar() {
     var holder = document.getElementById('rmSidebarRows');
     if (!holder) return;
@@ -807,14 +1249,12 @@ var onMessageFromPlugin;
       holder.innerHTML = '<div class="rm-sidebar-empty">No roadmap items yet.</div>';
       return;
     }
+    var collapsedSet = {};
+    var c = data.collapsedIds || [];
+    for (var k = 0; k < c.length; k++) collapsedSet[c[k]] = true;
     var html = '';
     for (var i = 0; i < items.length; i++) {
-      var it = items[i];
-      var pTxt = (it.progress == null) ? '—' : (it.progress + '%');
-      html += '<div class="rm-sidebar-row" data-roadmap-id="' + escAttr(it.id) + '" data-filename="' + escAttr(it.filename) + '" title="' + escAttr(it.title) + '">';
-      html += '<div class="rm-sidebar-row-title">' + escHTML(it.title) + '</div>';
-      html += '<div class="rm-sidebar-row-progress">' + escHTML(pTxt) + '</div>';
-      html += '</div>';
+      html += renderSidebarRow(items[i], collapsedSet[items[i].id]);
     }
     holder.innerHTML = html;
   }
@@ -860,7 +1300,52 @@ var onMessageFromPlugin;
     }
 
     var sidebar = document.getElementById('rmSidebarRows');
-    if (sidebar) sidebar.addEventListener('click', onSidebarClick);
+    if (sidebar) {
+      sidebar.addEventListener('click', onSidebarClick);
+      sidebar.addEventListener('mousemove', onSidebarMouseMove);
+      sidebar.addEventListener('mouseleave', hideTooltip);
+      // HTML5 DnD for sidebar reparent/reorder
+      sidebar.addEventListener('dragstart', onSidebarDragStart);
+      sidebar.addEventListener('dragover', onSidebarDragOver);
+      sidebar.addEventListener('dragleave', onSidebarDragLeave);
+      sidebar.addEventListener('drop', onSidebarDrop);
+      sidebar.addEventListener('dragend', onSidebarDragEnd);
+    }
+
+    // Sidebar resize
+    var sidebarEl = document.getElementById('rmSidebar');
+    var resizeEl = document.getElementById('rmSidebarResize');
+    if (sidebarEl && resizeEl) {
+      var rs = null;
+      resizeEl.addEventListener('mousedown', function (ev) {
+        ev.preventDefault();
+        rs = {
+          startX: ev.clientX,
+          startW: sidebarEl.getBoundingClientRect().width,
+        };
+        resizeEl.classList.add('dragging');
+        document.body.classList.add('rm-resizing');
+        document.addEventListener('mousemove', moveR);
+        document.addEventListener('mouseup', endR);
+      });
+      function moveR(ev) {
+        if (!rs) return;
+        var w = rs.startW + (ev.clientX - rs.startX);
+        if (w < 140) w = 140;
+        if (w > 800) w = 800;
+        sidebarEl.style.width = w + 'px';
+      }
+      function endR() {
+        if (!rs) return;
+        var finalW = Math.round(sidebarEl.getBoundingClientRect().width);
+        rs = null;
+        resizeEl.classList.remove('dragging');
+        document.body.classList.remove('rm-resizing');
+        document.removeEventListener('mousemove', moveR);
+        document.removeEventListener('mouseup', endR);
+        sendMessageToPlugin('savePrefs', JSON.stringify({ sidebarWidth: finalW }));
+      }
+    }
 
     var zoomBtns = document.getElementById('rmZoomBtns');
     if (zoomBtns) zoomBtns.addEventListener('click', onZoomClick);
@@ -868,12 +1353,13 @@ var onMessageFromPlugin;
     var todayBtn = document.getElementById('rmTodayBtn');
     if (todayBtn) todayBtn.addEventListener('click', scrollToToday);
 
-    var refreshBtn = document.getElementById('rmRefreshBtn');
-    if (refreshBtn) refreshBtn.addEventListener('click', function () {
-      var wrap = document.getElementById('rmCanvasWrap');
-      if (wrap) savedScroll = { left: wrap.scrollLeft, top: wrap.scrollTop };
-      sendMessageToPlugin('requestRefresh', JSON.stringify({}));
+    var showDoneBtn = document.getElementById('rmShowDoneBtn');
+    if (showDoneBtn) showDoneBtn.addEventListener('click', function () {
+      var newVal = !showDoneBtn.classList.contains('active');
+      showDoneBtn.classList.toggle('active', newVal);
+      sendMessageToPlugin('toggleShowCompletedTasks', JSON.stringify({ value: newVal }));
     });
+
 
     // Save scroll position on scroll (debounced)
     var saveT = null;

@@ -29,30 +29,67 @@ Or, with a note open, run `/Add or remove note from roadmap` to set
 
 ## Frontmatter properties
 
-| Key             | Type       | What it does                                                                                  |
-|-----------------|------------|-----------------------------------------------------------------------------------------------|
-| `roadmap`       | string     | Unique identifier; only notes with this key appear on the chart. Use it from `prerequisites`. |
-| `start`         | YYYY-MM-DD | Planned start.                                                                                |
-| `end`           | YYYY-MM-DD | Planned end.                                                                                  |
-| `due`           | YYYY-MM-DD | Hard deadline. Red flag marker; bar turns red if today is past it and progress < 100%.        |
-| `defer`         | YYYY-MM-DD | Don't-start-before date. Bar shows dashed border while `today < defer`.                       |
-| `progress`      | 0–100      | Explicit percent complete. If absent, computed as `done / (done + open + scheduled)`.         |
-| `prerequisites` | comma list | Other roadmap ids that must finish before this one. Drawn as arrows.                          |
+| Key               | Type       | What it does                                                                                  |
+|-------------------|------------|-----------------------------------------------------------------------------------------------|
+| `roadmap`         | string     | Unique identifier; only notes with this key appear on the chart. Use it from `prerequisites`. |
+| `roadmap_parent`  | string     | Another `roadmap` id; nests this note under it as a child.                                    |
+| `roadmap_index`   | integer    | Sibling order under the same parent (lower = earlier). Maintained automatically when you drag in the sidebar. |
+| `start`           | YYYY-MM-DD | Planned start.                                                                                |
+| `end`             | YYYY-MM-DD | Planned end.                                                                                  |
+| `due`             | YYYY-MM-DD | Hard deadline. Red flag marker; bar turns red if today is past it and progress < 100%.        |
+| `defer`           | YYYY-MM-DD | Don't-start-before date. Bar shows dashed border while `today < defer`.                       |
+| `progress`        | 0–100      | Explicit percent complete. If absent, computed as `done / (done + open + scheduled)`.         |
+| `prerequisites`   | comma list | Other roadmap ids that must finish before this one. Drawn as arrows.                          |
+| `icon-color`      | Tailwind name or hex | Colors this project's bar (and its tasks' pills). Accepts e.g. `amber-500`, `sky`, `#fbbf24`. NotePlan also uses this key for its own sidebar icon. |
 
 Notes without `roadmap:` are ignored. Cancelled tasks/checklists are excluded
 from auto-progress.
 
+## Tasks as roadmap rows
+
+Each open task (and scheduled, and — optionally — completed) inside a roadmap
+note becomes a single-cell row on the timeline, nested under its project. A
+task's "schedule" is the NotePlan `>YYYY-MM-DD` marker in its content; tasks
+have no start/end/due/defer of their own.
+
+Toggle the **double-check** button in the toolbar to also include completed
+tasks.
+
 ## Interactions
+
+### On a bar
 
 - **Click a bar** — opens the underlying note in a split view.
 - **Drag the bar body** — moves both start and end (preserving duration).
-- **Drag a bar's left/right edge** — adjusts that endpoint.
-- **Hover a bar's right edge dot, drag to another bar** — adds the source as a
-  prerequisite of the target.
+- **Drag a bar's left/right edge** — adjusts that endpoint. Tasks are
+  single-cell and only move; their edges can't be resized.
+- **Opt-click and drag a project bar onto another** — adds the source as a
+  prerequisite of the target. (Same effect as dragging the small dot on the
+  bar's right edge.)
 - **Click a dependency arrow** — confirms and removes the prerequisite.
+
+### On an empty row
+
+- **Drag across cells on an unscheduled project's row** — sets `start` and
+  `end` to the dragged range.
+- **Click (or drag) on an unscheduled task's row** — schedules the task to
+  that day via `>YYYY-MM-DD`.
+
+### Sidebar
+
 - **Click a sidebar row** — scrolls the timeline to that item. ⌘/Ctrl-click
   opens the note directly.
+- **Click the chevron** — collapses / expands the project's children
+  (sub-projects and tasks). Persisted across sessions.
+- **Drag a project row onto another** — drop on the *middle* to reparent
+  (becomes a child); drop near the *top* or *bottom* edge to reorder among
+  siblings. `roadmap_parent` and `roadmap_index` are rewritten on the affected
+  notes.
+
+### Toolbar
+
 - **Zoom buttons** — Day / Week / Month / Quarter.
+- **Show completed** — include `done` tasks/checklists on the chart.
 - **Today** — re-centers the timeline on today.
 
 ## Visual cues

@@ -12,19 +12,31 @@ function getSettings() {
   var s = DataStore.settings || {};
   var excl = (s.foldersToExclude || '@Archive, @Trash, @Templates')
     .split(',').map(function (f) { return f.trim(); }).filter(Boolean);
+  var collapsed = [];
+  try { collapsed = JSON.parse(s.collapsedIds || '[]') || []; } catch (e) { collapsed = []; }
+  var sidebarW = parseInt(s.sidebarWidth, 10);
+  if (isNaN(sidebarW) || sidebarW < 140 || sidebarW > 800) sidebarW = 240;
   return {
     foldersToExclude: excl,
     weekStart: (s.weekStart === 'Sunday') ? 'Sunday' : 'Monday',
     lastZoom: s.lastZoom || 'week',
     lastScrollDate: s.lastScrollDate || '',
+    collapsedIds: collapsed,
+    showCompletedTasks: s.showCompletedTasks === 'true',
+    sidebarWidth: sidebarW,
   };
 }
 
 function savePrefs(patch) {
-  var s = DataStore.settings || {};
-  var keys = Object.keys(patch || {});
-  for (var i = 0; i < keys.length; i++) s[keys[i]] = String(patch[keys[i]]);
-  DataStore.settings = s;
+  try {
+    if (typeof DataStore === 'undefined') { console.log('Roadmap: savePrefs skipped — DataStore undefined'); return; }
+    var s = DataStore.settings || {};
+    var keys = Object.keys(patch || {});
+    for (var i = 0; i < keys.length; i++) s[keys[i]] = String(patch[keys[i]]);
+    DataStore.settings = s;
+  } catch (e) {
+    console.log('Roadmap: savePrefs error: ' + e + ' patch=' + JSON.stringify(patch || {}));
+  }
 }
 
 // ============================================
@@ -145,55 +157,22 @@ function parseFrontmatterFromContent(content) {
 }
 
 function writeFrontmatterPatch(note, patch) {
+  // Always merge by editing content directly. The native
+  // `note.updateFrontmatterAttributes` was observed to REPLACE the entire
+  // frontmatter block (wiping unrelated keys like `roadmap`), so we avoid it.
   if (!note) return false;
-  var entries = [];
-  var deletions = [];
+  var content = note.content || '';
   var keys = Object.keys(patch || {});
   for (var i = 0; i < keys.length; i++) {
-    var v = patch[keys[i]];
+    var k = keys[i];
+    var v = patch[k];
     if (v == null || v === '') {
-      deletions.push(keys[i]);
+      content = removeFrontmatterKey(content, k);
     } else {
-      entries.push({ key: keys[i], value: String(v) });
+      content = setFrontmatterKeyInContent(content, k, String(v));
     }
   }
-
-  // Try native batched update first (v3.18.1+)
-  try {
-    if (entries.length > 0 && typeof note.updateFrontmatterAttributes === 'function') {
-      note.updateFrontmatterAttributes(entries);
-    }
-  } catch (e) {
-    console.log('Roadmap: updateFrontmatterAttributes threw: ' + e);
-  }
-
-  // For deletions and as a fallback for older NotePlan, edit content directly
-  if (deletions.length > 0) {
-    var content = note.content || '';
-    for (var d = 0; d < deletions.length; d++) {
-      content = removeFrontmatterKey(content, deletions[d]);
-    }
-    note.content = content;
-  }
-
-  // Re-verify via fallback if entries didn't stick (older NotePlan)
-  try {
-    var fm = readFrontmatter(note);
-    var needsFallback = false;
-    for (var k = 0; k < entries.length; k++) {
-      if (String(fm[entries[k].key]) !== String(entries[k].value)) {
-        needsFallback = true; break;
-      }
-    }
-    if (needsFallback) {
-      var c2 = note.content || '';
-      for (var e2 = 0; e2 < entries.length; e2++) {
-        c2 = setFrontmatterKeyInContent(c2, entries[e2].key, entries[e2].value);
-      }
-      note.content = c2;
-    }
-  } catch (e) { }
-
+  if (content !== note.content) note.content = content;
   try { DataStore.updateCache(note, true); } catch (e) { }
   return true;
 }
@@ -282,11 +261,250 @@ function isExcluded(filename, excluded) {
   return false;
 }
 
+// ============================================
+// COLOR RESOLUTION (Tailwind palette + hex)
+// ============================================
+// Users can set `icon-color: amber-500` or `icon-color: "#fbbf24"` on a note.
+// We accept either Tailwind v3 names (color-shade) or arbitrary hex.
+
+var TW_SHADES = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950'];
+var TW_ROWS = [
+  ['red', 'fef2f2,fee2e2,fecaca,fca5a5,f87171,ef4444,dc2626,b91c1c,991b1b,7f1d1d,450a0a'],
+  ['orange', 'fff7ed,ffedd5,fed7aa,fdba74,fb923c,f97316,ea580c,c2410c,9a3412,7c2d12,431407'],
+  ['amber', 'fffbeb,fef3c7,fde68a,fcd34d,fbbf24,f59e0b,d97706,b45309,92400e,78350f,451a03'],
+  ['yellow', 'fefce8,fef9c3,fef08a,fde047,facc15,eab308,ca8a04,a16207,854d0e,713f12,422006'],
+  ['lime', 'f7fee7,ecfccb,d9f99d,bef264,a3e635,84cc16,65a30d,4d7c0f,3f6212,365314,1a2e05'],
+  ['green', 'f0fdf4,dcfce7,bbf7d0,86efac,4ade80,22c55e,16a34a,15803d,166534,14532d,052e16'],
+  ['emerald', 'ecfdf5,d1fae5,a7f3d0,6ee7b7,34d399,10b981,059669,047857,065f46,064e3b,022c22'],
+  ['teal', 'f0fdfa,ccfbf1,99f6e4,5eead4,2dd4bf,14b8a6,0d9488,0f766e,115e59,134e4a,042f2e'],
+  ['cyan', 'ecfeff,cffafe,a5f3fc,67e8f9,22d3ee,06b6d4,0891b2,0e7490,155e75,164e63,083344'],
+  ['sky', 'f0f9ff,e0f2fe,bae6fd,7dd3fc,38bdf8,0ea5e9,0284c7,0369a1,075985,0c4a6e,082f49'],
+  ['blue', 'eff6ff,dbeafe,bfdbfe,93c5fd,60a5fa,3b82f6,2563eb,1d4ed8,1e40af,1e3a8a,172554'],
+  ['indigo', 'eef2ff,e0e7ff,c7d2fe,a5b4fc,818cf8,6366f1,4f46e5,4338ca,3730a3,312e81,1e1b4b'],
+  ['violet', 'f5f3ff,ede9fe,ddd6fe,c4b5fd,a78bfa,8b5cf6,7c3aed,6d28d9,5b21b6,4c1d95,2e1065'],
+  ['purple', 'faf5ff,f3e8ff,e9d5ff,d8b4fe,c084fc,a855f7,9333ea,7e22ce,6b21a8,581c87,3b0764'],
+  ['fuchsia', 'fdf4ff,fae8ff,f5d0fe,f0abfc,e879f9,d946ef,c026d3,a21caf,86198f,701a75,4a044e'],
+  ['pink', 'fdf2f8,fce7f3,fbcfe8,f9a8d4,f472b6,ec4899,db2777,be185d,9d174d,831843,500724'],
+  ['rose', 'fff1f2,ffe4e6,fecdd3,fda4af,fb7185,f43f5e,e11d48,be123c,9f1239,881337,4c0519'],
+  ['slate', 'f8fafc,f1f5f9,e2e8f0,cbd5e1,94a3b8,64748b,475569,334155,1e293b,0f172a,020617'],
+  ['gray', 'f9fafb,f3f4f6,e5e7eb,d1d5db,9ca3af,6b7280,4b5563,374151,1f2937,111827,030712'],
+  ['zinc', 'fafafa,f4f4f5,e4e4e7,d4d4d8,a1a1aa,71717a,52525b,3f3f46,27272a,18181b,09090b'],
+  ['neutral', 'fafafa,f5f5f5,e5e5e5,d4d4d4,a3a3a3,737373,525252,404040,262626,171717,0a0a0a'],
+  ['stone', 'fafaf9,f5f5f4,e7e5e4,d6d3d1,a8a29e,78716c,57534e,44403c,292524,1c1917,0c0a09'],
+];
+var TW_PALETTE = (function () {
+  var out = {};
+  for (var i = 0; i < TW_ROWS.length; i++) {
+    var name = TW_ROWS[i][0];
+    var parts = TW_ROWS[i][1].split(',');
+    for (var j = 0; j < TW_SHADES.length; j++) {
+      out[name + '-' + TW_SHADES[j]] = '#' + parts[j];
+    }
+    out[name] = '#' + parts[5]; // bare name → 500 shade
+  }
+  return out;
+})();
+
+function resolveColor(value) {
+  if (!value) return '';
+  var s = String(value).trim().toLowerCase();
+  if (!s) return '';
+  // Allow optional quotes
+  if ((s[0] === '"' && s[s.length - 1] === '"') || (s[0] === "'" && s[s.length - 1] === "'")) {
+    s = s.substring(1, s.length - 1).trim();
+  }
+  if (s.charAt(0) === '#') {
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(s)) return s;
+    return '';
+  }
+  return TW_PALETTE[s] || '';
+}
+
+// Regex for the NotePlan scheduled-date marker inside a task line.
+// Matches `>2026-06-15` (preferred) or NotePlan's `@YYYY-MM-DD` variant.
+var SCHEDULED_RX = />(\d{4}-\d{2}-\d{2})\b/;
+
+function extractScheduledFromContent(content) {
+  if (!content) return '';
+  var m = String(content).match(SCHEDULED_RX);
+  return m ? m[1] : '';
+}
+
+function stripTaskMarkers(content) {
+  return String(content || '')
+    .replace(/>(\d{4}-\d{2}-\d{2})\b/g, '')
+    .replace(/@done\([^)]*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function buildProjectItem(note, fm) {
+  var idRaw = fm.roadmap;
+  if (idRaw == null || idRaw === '' || idRaw === 'false') return null;
+  var id = String(idRaw).trim();
+  if (id === 'true') id = (note.title || note.filename.replace(/\.[^.]+$/, '')).trim();
+  if (!id) return null;
+
+  var parent = fm.roadmap_parent ? String(fm.roadmap_parent).trim() : '';
+  if (parent === '' || parent === 'false') parent = '';
+  var idxRaw = fm.roadmap_index;
+  var index = (idxRaw != null && idxRaw !== '') ? parseInt(idxRaw, 10) : null;
+  if (index != null && isNaN(index)) index = null;
+
+  var start = toISO(parseDateStr(fm.start));
+  var end = toISO(parseDateStr(fm.end));
+  var due = toISO(parseDateStr(fm.due));
+  var defer = toISO(parseDateStr(fm.defer));
+  var prereqs = String(fm.prerequisites || '')
+    .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+
+  var progress = computeProgress(note, fm);
+  // NotePlan's built-in `icon-color` (Tailwind name or hex); used to color
+  // this project's bar (and its tasks' pills) on the roadmap.
+  var color = resolveColor(fm['icon-color'] || fm['icon_color'] || fm.color);
+
+  return {
+    kind: 'project',
+    id: id,
+    filename: note.filename,
+    title: note.title || id,
+    parentId: parent,
+    index: index,
+    start: start || '',
+    end: end || '',
+    due: due || '',
+    defer: defer || '',
+    progress: progress,
+    progressExplicit: fm.progress != null && fm.progress !== '',
+    prerequisites: prereqs,
+    color: color,
+    hasStart: !!start, hasEnd: !!end, hasDue: !!due, hasDefer: !!defer,
+  };
+}
+
+function buildTaskItemsForNote(note, projectId, showCompleted, projectColor) {
+  var out = [];
+  var ps = [];
+  try { ps = note.paragraphs || []; } catch (e) { ps = []; }
+  // One-time histogram of paragraph types per note, for diagnostics
+  var typeCounts = {};
+  for (var i = 0; i < ps.length; i++) {
+    var p = ps[i];
+    var t = p.type || '(undefined)';
+    typeCounts[t] = (typeCounts[t] || 0) + 1;
+    var isTaskLike = (t === 'open' || t === 'scheduled' || t === 'done'
+      || t === 'checklist' || t === 'checklistScheduled' || t === 'checklistDone');
+    if (!isTaskLike) continue;
+    var done = (t === 'done' || t === 'checklistDone');
+    if (done && !showCompleted) continue;
+    var raw = String(p.content == null ? '' : p.content);
+    var scheduled = extractScheduledFromContent(raw);
+    var title = stripTaskMarkers(raw);
+    if (!title) continue;
+    out.push({
+      kind: 'task',
+      id: 'task:' + note.filename + '#' + p.lineIndex,
+      filename: note.filename,
+      lineIndex: p.lineIndex,
+      indents: (typeof p.indents === 'number' ? p.indents : 0),
+      title: title,
+      parentId: projectId,
+      index: null,
+      scheduled: scheduled,
+      isDone: done,
+      isChecklist: (t === 'checklist' || t === 'checklistScheduled' || t === 'checklistDone'),
+      color: projectColor || '',
+    });
+  }
+  var typeStr = '';
+  var tkeys = Object.keys(typeCounts);
+  for (var k = 0; k < tkeys.length; k++) typeStr += (k ? ', ' : '') + tkeys[k] + '=' + typeCounts[tkeys[k]];
+  console.log('Roadmap: ' + note.filename + ' (' + ps.length + ' paragraphs) types: ' + typeStr + ' → ' + out.length + ' tasks');
+  return out;
+}
+
+function orderByTree(rawItems) {
+  // Group children by parentId; preserve only items whose parents (if specified) resolve.
+  var byId = {};
+  for (var i = 0; i < rawItems.length; i++) byId[rawItems[i].id] = rawItems[i];
+
+  var children = {};
+  for (var i2 = 0; i2 < rawItems.length; i2++) {
+    var it = rawItems[i2];
+    var p = it.parentId || '';
+    if (p && !byId[p]) p = ''; // dangling parent → promote to root
+    if (!children[p]) children[p] = [];
+    children[p].push(it);
+  }
+
+  function sortKey(a, b) {
+    // Projects always above tasks at the same level
+    if (a.kind !== b.kind) return a.kind === 'project' ? -1 : 1;
+    // Tasks: preserve their file order so sub-task hierarchy reads naturally
+    if (a.kind === 'task') return (a.lineIndex || 0) - (b.lineIndex || 0);
+    // Projects: explicit roadmap_index first, then earliest date, then title
+    var ai = (a.index != null) ? a.index : 1e9;
+    var bi = (b.index != null) ? b.index : 1e9;
+    if (ai !== bi) return ai - bi;
+    var ad = a.start || a.defer || a.end || a.due || '￿';
+    var bd = b.start || b.defer || b.end || b.due || '￿';
+    if (ad !== bd) return ad < bd ? -1 : 1;
+    return (a.title || '').localeCompare(b.title || '');
+  }
+
+  var ordered = [];
+  function dfs(parentId, depth) {
+    var kids = children[parentId] || [];
+    kids.sort(sortKey);
+    for (var k = 0; k < kids.length; k++) {
+      kids[k].depth = depth;
+      kids[k].hasChildren = !!(children[kids[k].id] && children[kids[k].id].length);
+      ordered.push(kids[k]);
+      dfs(kids[k].id, depth + 1);
+    }
+  }
+  dfs('', 0);
+  // Append any orphans that weren't reached (shouldn't happen, but defensive)
+  if (ordered.length < rawItems.length) {
+    var seen = {};
+    for (var s = 0; s < ordered.length; s++) seen[ordered[s].id] = true;
+    for (var r = 0; r < rawItems.length; r++) {
+      if (!seen[rawItems[r].id]) {
+        rawItems[r].depth = 0;
+        rawItems[r].hasChildren = false;
+        ordered.push(rawItems[r]);
+      }
+    }
+  }
+  return ordered;
+}
+
+function applyCollapse(ordered, collapsedIds) {
+  if (!collapsedIds || !collapsedIds.length) return ordered;
+  var hideUnderDepth = -1;
+  var hideUnderId = null;
+  var out = [];
+  for (var i = 0; i < ordered.length; i++) {
+    var it = ordered[i];
+    if (hideUnderId != null) {
+      if (it.depth > hideUnderDepth) continue;
+      hideUnderId = null;
+      hideUnderDepth = -1;
+    }
+    out.push(it);
+    if (collapsedIds.indexOf(it.id) >= 0 && it.hasChildren) {
+      hideUnderId = it.id;
+      hideUnderDepth = it.depth;
+    }
+  }
+  return out;
+}
+
 function collectRoadmapItems() {
   var cfg = getSettings();
   var notes = DataStore.projectNotes || [];
-  var items = [];
-  var idToItem = {};
+  var raw = [];
+  var idToProject = {};
 
   for (var i = 0; i < notes.length; i++) {
     var note = notes[i];
@@ -296,56 +514,47 @@ function collectRoadmapItems() {
     if (isExcluded(note.filename, cfg.foldersToExclude)) continue;
 
     var fm = readFrontmatter(note);
-    var idRaw = fm.roadmap;
-    if (idRaw == null || idRaw === '' || idRaw === 'false') continue;
+    var project = buildProjectItem(note, fm);
+    if (!project) continue;
 
-    // Allow `roadmap: true` to auto-derive identifier from title
-    var id = String(idRaw).trim();
-    if (id === 'true') id = (note.title || note.filename.replace(/\.[^.]+$/, '')).trim();
-    if (!id) continue;
+    console.log('Roadmap: project ' + project.id +
+      ' parent=' + JSON.stringify(fm.roadmap_parent || '') +
+      ' index=' + JSON.stringify(fm.roadmap_index || '') +
+      ' fm keys=' + Object.keys(fm).join(','));
 
-    var title = note.title || id;
-    var start = toISO(parseDateStr(fm.start));
-    var end = toISO(parseDateStr(fm.end));
-    var due = toISO(parseDateStr(fm.due));
-    var defer = toISO(parseDateStr(fm.defer));
-    var prereqs = String(fm.prerequisites || '')
-      .split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-
-    var progress = computeProgress(note, fm);
-
-    var item = {
-      id: id,
-      filename: note.filename,
-      title: title,
-      start: start || '',
-      end: end || '',
-      due: due || '',
-      defer: defer || '',
-      progress: progress, // number 0-100 or null
-      progressExplicit: fm.progress != null && fm.progress !== '',
-      prerequisites: prereqs,
-      hasStart: !!start, hasEnd: !!end, hasDue: !!due, hasDefer: !!defer,
-    };
-
-    // Resolve conflicts: if a duplicate id already exists, keep the first and warn
-    if (idToItem[id]) {
-      item.duplicate = true;
+    if (idToProject[project.id]) {
+      project.duplicate = true;
     } else {
-      idToItem[id] = item;
+      idToProject[project.id] = project;
     }
-    items.push(item);
+    raw.push(project);
+
+    // Collect tasks belonging to this note (inheriting the project's color)
+    var tasks = buildTaskItemsForNote(note, project.id, cfg.showCompletedTasks, project.color);
+    for (var t = 0; t < tasks.length; t++) raw.push(tasks[t]);
   }
 
-  // Sort: by earliest available date (start, defer, end, due), then by title
-  items.sort(function (a, b) {
-    var ad = a.start || a.defer || a.end || a.due || '￿';
-    var bd = b.start || b.defer || b.end || b.due || '￿';
-    if (ad !== bd) return ad < bd ? -1 : 1;
-    return (a.title || '').localeCompare(b.title || '');
-  });
+  var ordered = orderByTree(raw);
+  var visible = applyCollapse(ordered, cfg.collapsedIds);
 
-  return { items: items, weekStart: cfg.weekStart, zoom: cfg.lastZoom, scrollDate: cfg.lastScrollDate };
+  // Diagnostic counts — visible in NotePlan's plugin console.
+  var nProj = 0, nTask = 0, nChild = 0, nScheduled = 0;
+  for (var ci = 0; ci < raw.length; ci++) {
+    if (raw[ci].kind === 'task') { nTask++; if (raw[ci].scheduled) nScheduled++; }
+    else { nProj++; if (raw[ci].parentId) nChild++; }
+  }
+  console.log('Roadmap: collected ' + nProj + ' projects (' + nChild + ' with parent), ' + nTask + ' tasks (' + nScheduled + ' scheduled). Visible: ' + visible.length);
+
+  return {
+    items: visible,
+    allIds: ordered.map(function (it) { return it.id; }),
+    collapsedIds: cfg.collapsedIds,
+    showCompletedTasks: cfg.showCompletedTasks,
+    weekStart: cfg.weekStart,
+    zoom: cfg.lastZoom,
+    scrollDate: cfg.lastScrollDate,
+    sidebarWidth: cfg.sidebarWidth,
+  };
 }
 
 function findNoteByRoadmapId(id) {
@@ -369,6 +578,67 @@ function findNoteByFilename(filename) {
     if (notes[i].filename === filename) return notes[i];
   }
   return null;
+}
+
+// ============================================
+// TASK UPDATES
+// ============================================
+// Tasks are identified by `task:<filename>#<lineIndex>` — recomputed every
+// refresh. Setting a scheduled date adds/replaces `>YYYY-MM-DD` in the content
+// and lets NotePlan auto-promote the paragraph type to `scheduled`.
+
+function rescheduleTask(filename, lineIndex, dateISO) {
+  var note = findNoteByFilename(filename);
+  if (!note) return false;
+  var ps = note.paragraphs || [];
+  if (lineIndex == null || lineIndex < 0 || lineIndex >= ps.length) return false;
+  var p = ps[lineIndex];
+  if (!p) return false;
+
+  var c = String(p.content == null ? '' : p.content);
+  var newC;
+  if (dateISO) {
+    if (SCHEDULED_RX.test(c)) {
+      newC = c.replace(/>(\d{4}-\d{2}-\d{2})\b/g, '>' + dateISO);
+    } else {
+      newC = c.replace(/\s+$/, '') + ' >' + dateISO;
+    }
+  } else {
+    // Clear scheduling
+    newC = c.replace(/\s*>(\d{4}-\d{2}-\d{2})\b/g, '').replace(/\s{2,}/g, ' ').trim();
+  }
+  if (newC === c) return true;
+  p.content = newC;
+  try { note.updateParagraph(p); } catch (e) { console.log('Roadmap: updateParagraph: ' + e); }
+  try { DataStore.updateCache(note, true); } catch (e) { }
+  return true;
+}
+
+// ============================================
+// HIERARCHY UPDATES
+// ============================================
+// Reparent / reorder rewrite `roadmap_parent` and `roadmap_index` on affected
+// notes. Indices are reissued in increments of 10 for the new sibling set.
+
+function reorderSiblings(parentId, orderedIds) {
+  // orderedIds is an array of project IDs (tasks are ignored here)
+  var changed = 0;
+  for (var i = 0; i < orderedIds.length; i++) {
+    var n = findNoteByRoadmapId(orderedIds[i]);
+    if (!n) continue;
+    var fm = readFrontmatter(n);
+    var newIdx = (i + 1) * 10;
+    var patch = {};
+    if (String(fm.roadmap_index || '') !== String(newIdx)) patch.roadmap_index = String(newIdx);
+    if (String(fm.roadmap_parent || '') !== String(parentId || '')) {
+      patch.roadmap_parent = parentId ? String(parentId) : '';
+    }
+    if (Object.keys(patch).length) {
+      writeFrontmatterPatch(n, patch);
+      changed++;
+    }
+  }
+  return changed;
 }
 
 // ============================================
@@ -409,9 +679,7 @@ function getInlineCSS() {
     '.rm-app { display: flex; flex-direction: column; height: 100vh; }\n' +
 
     /* TOOLBAR */
-    '.rm-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--rm-border); flex-shrink: 0; }\n' +
-    '.rm-toolbar-title { font-weight: 700; font-size: 13px; color: var(--rm-text); margin-right: auto; display: flex; align-items: center; gap: 8px; }\n' +
-    '.rm-toolbar-title i { color: var(--rm-accent); }\n' +
+    '.rm-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--rm-border); flex-shrink: 0; justify-content: flex-end; }\n' +
     '.rm-zoom-btns { display: inline-flex; background: var(--rm-bg-card); border-radius: 100px; padding: 2px; }\n' +
     '.rm-zoom-btn { padding: 4px 12px; font-size: 11px; font-weight: 600; border: none; background: transparent; color: var(--rm-text-muted); cursor: pointer; border-radius: 100px; }\n' +
     '.rm-zoom-btn:hover { color: var(--rm-text); }\n' +
@@ -423,17 +691,31 @@ function getInlineCSS() {
 
     /* MAIN LAYOUT */
     '.rm-main { flex: 1; display: flex; overflow: hidden; min-height: 0; }\n' +
-    '.rm-sidebar { width: var(--rm-sidebar-w); flex-shrink: 0; background: var(--rm-bg-card); border-right: 1px solid var(--rm-border); display: flex; flex-direction: column; overflow: hidden; }\n' +
+    '.rm-sidebar { position: relative; width: var(--rm-sidebar-w); min-width: 140px; max-width: 800px; flex-shrink: 0; background: var(--rm-bg-card); border-right: 1px solid var(--rm-border); display: flex; flex-direction: column; overflow: hidden; }\n' +
+    '.rm-sidebar-resize { flex: 0 0 6px; margin-left: -3px; margin-right: -3px; cursor: col-resize; z-index: 6; align-self: stretch; }\n' +
+    '.rm-sidebar-resize:hover, .rm-sidebar-resize.dragging { background: var(--rm-accent); opacity: 0.55; }\n' +
+    'body.rm-resizing, body.rm-resizing * { cursor: col-resize !important; user-select: none !important; }\n' +
     '.rm-sidebar-header { padding: 0; border-bottom: 1px solid var(--rm-border); flex-shrink: 0; display: flex; align-items: center; height: 56px; padding: 0 12px; }\n' +
     '.rm-sidebar-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--rm-text-faint); }\n' +
     '.rm-sidebar-rows { flex: 1; overflow-y: auto; overflow-x: hidden; }\n' +
-    '.rm-sidebar-row { display: flex; align-items: center; gap: 8px; height: var(--rm-row-h); padding: 0 12px; border-bottom: 1px solid var(--rm-border); cursor: pointer; }\n' +
+    '.rm-sidebar-row { position: relative; display: flex; align-items: center; gap: 6px; height: var(--rm-row-h); padding: 0 8px; border-bottom: 1px solid var(--rm-border); cursor: pointer; user-select: none; }\n' +
     '.rm-sidebar-row:hover { background: var(--rm-bg-elevated); }\n' +
     '.rm-sidebar-row.highlight { background: var(--rm-accent-soft); }\n' +
+    '.rm-sidebar-row.dragging { opacity: 0.5; }\n' +
+    '.rm-sidebar-row.drop-into { background: var(--rm-accent-soft); box-shadow: inset 0 0 0 2px var(--rm-accent); }\n' +
+    '.rm-sidebar-row.drop-before::before { content: ""; position: absolute; left: 4px; right: 4px; top: -1px; height: 2px; background: var(--rm-accent); border-radius: 1px; z-index: 5; }\n' +
+    '.rm-sidebar-row.drop-after::after { content: ""; position: absolute; left: 4px; right: 4px; bottom: -1px; height: 2px; background: var(--rm-accent); border-radius: 1px; z-index: 5; }\n' +
+    '.rm-sidebar-row.task .rm-sidebar-row-title { font-weight: 400; color: var(--rm-text-muted); }\n' +
+    '.rm-sidebar-row.task.done .rm-sidebar-row-title { text-decoration: line-through; color: var(--rm-text-faint); }\n' +
     '.rm-sidebar-row-title { flex: 1; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n' +
     '.rm-sidebar-row-progress { font-size: 10px; color: var(--rm-text-faint); font-variant-numeric: tabular-nums; }\n' +
     '.rm-sidebar-row.warn .rm-sidebar-row-title { color: var(--rm-warn); }\n' +
     '.rm-sidebar-row.danger .rm-sidebar-row-title { color: var(--rm-danger); }\n' +
+    '.rm-chev { width: 16px; height: 16px; flex-shrink: 0; padding: 0; border: none; background: transparent; color: var(--rm-text-faint); cursor: pointer; font-size: 9px; display: inline-flex; align-items: center; justify-content: center; border-radius: 3px; }\n' +
+    '.rm-chev:hover { color: var(--rm-text); background: var(--rm-border); }\n' +
+    '.rm-chev-spacer { width: 16px; flex-shrink: 0; }\n' +
+    '.rm-row-icon { color: var(--rm-text-faint); font-size: 11px; width: 12px; flex-shrink: 0; text-align: center; }\n' +
+    '.rm-sidebar-row.project .rm-row-icon { color: var(--rm-accent); }\n' +
     '.rm-sidebar-empty { padding: 24px 16px; text-align: center; color: var(--rm-text-faint); font-size: 12px; line-height: 1.6; }\n' +
     '.rm-sidebar-empty code { background: var(--rm-bg-elevated); padding: 2px 5px; border-radius: 3px; font-size: 11px; }\n' +
 
@@ -468,6 +750,17 @@ function getInlineCSS() {
     '.rm-bar.overdue { border-color: var(--rm-danger); }\n' +
     '.rm-bar.complete { background: color-mix(in srgb, var(--rm-ok) 30%, var(--rm-bg-card)); border-color: var(--rm-ok); }\n' +
     '.rm-bar.placeholder { border-style: dotted; background: transparent; opacity: 0.55; }\n' +
+    '.rm-bar.task { top: 8px; height: calc(var(--rm-row-h) - 16px); border-radius: 50px; background: var(--rm-bg-card); border: 1.5px solid var(--rm-accent); }\n' +
+    '.rm-bar.task.done { border-style: dashed; opacity: 0.55; background: transparent; }\n' +
+    '.rm-bar.task.checklist { border-radius: 4px; }\n' +
+    '.rm-bar.task .rm-bar-label { left: 4px; right: 4px; font-size: 10px; font-weight: 500; }\n' +
+    '.rm-bar.task .rm-bar-handle { display: none; }\n' +
+    '.rm-bar.task .rm-bar-link-dot { display: none; }\n' +
+    '.rm-row-ghost-label { position: absolute; left: 8px; top: 0; bottom: 0; display: flex; align-items: center; font-size: 10px; color: var(--rm-text-faint); font-style: italic; pointer-events: none; opacity: 0; transition: opacity 0.15s; }\n' +
+    '.rm-row:hover .rm-row-ghost-label { opacity: 1; }\n' +
+    '.rm-row.task-row .rm-row-ghost-label { left: auto; right: 8px; }\n' +
+    '.rm-range-select { position: absolute; top: 4px; height: calc(var(--rm-row-h) - 8px); background: var(--rm-accent-soft); border: 1.5px dashed var(--rm-accent); border-radius: 5px; pointer-events: none; z-index: 6; }\n' +
+    '.rm-icon-btn.active { background: var(--rm-accent-soft); color: var(--rm-accent); border-color: var(--rm-accent); }\n' +
     '.rm-bar-progress { position: absolute; left: 0; top: 0; bottom: 0; background: var(--rm-bar-progress); opacity: 0.55; pointer-events: none; }\n' +
     '.rm-bar-label { position: absolute; left: 6px; right: 22px; top: 0; bottom: 0; display: flex; align-items: center; font-size: 11px; font-weight: 600; color: var(--rm-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; mix-blend-mode: normal; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }\n' +
     '[data-theme="light"] .rm-bar-label { text-shadow: 0 1px 0 rgba(255,255,255,0.5); }\n' +
@@ -521,9 +814,10 @@ function getInlineCSS() {
 // HTML BUILDERS
 // ============================================
 
-function buildToolbar(zoom) {
+function buildToolbar(zoom, showCompletedTasks) {
+  // NotePlan's window chrome already shows the plugin icon, title, and a
+  // reload button, so we keep this toolbar minimal: just zoom + view toggles.
   var html = '<div class="rm-toolbar">';
-  html += '<div class="rm-toolbar-title"><i class="fa-solid fa-chart-gantt"></i><span>Roadmap</span></div>';
   html += '<div class="rm-zoom-btns" id="rmZoomBtns">';
   var zooms = [
     { k: 'day', label: 'Day' },
@@ -536,29 +830,63 @@ function buildToolbar(zoom) {
     html += '<button class="rm-zoom-btn' + active + '" data-zoom="' + zooms[i].k + '">' + zooms[i].label + '</button>';
   }
   html += '</div>';
+  html += '<button class="rm-icon-btn' + (showCompletedTasks ? ' active' : '') + '" id="rmShowDoneBtn" title="Show completed tasks"><i class="fa-solid fa-check-double"></i></button>';
   html += '<button class="rm-text-btn" id="rmTodayBtn"><i class="fa-solid fa-crosshairs"></i> Today</button>';
-  html += '<button class="rm-icon-btn" id="rmRefreshBtn" title="Refresh"><i class="fa-solid fa-arrows-rotate"></i></button>';
   html += '</div>';
   return html;
 }
 
-function buildSidebar(items) {
-  var html = '<aside class="rm-sidebar">';
+function buildSidebar(items, collapsedIds, sidebarWidth) {
+  var collapsedSet = {};
+  for (var c = 0; c < (collapsedIds || []).length; c++) collapsedSet[collapsedIds[c]] = true;
+  var widthStyle = sidebarWidth ? (' style="width:' + sidebarWidth + 'px"') : '';
+  var html = '<aside class="rm-sidebar" id="rmSidebar"' + widthStyle + '>';
   html += '<div class="rm-sidebar-header"><span class="rm-sidebar-title">Project</span></div>';
   html += '<div class="rm-sidebar-rows" id="rmSidebarRows">';
   if (items.length === 0) {
-    html += '<div class="rm-sidebar-empty">No roadmap items yet.<br><br>Add <code>roadmap: my-id</code> to a note\'s frontmatter, plus optional <code>start</code>, <code>end</code>, <code>due</code>, <code>defer</code>, <code>progress</code>, <code>prerequisites</code>.</div>';
+    html += '<div class="rm-sidebar-empty">No roadmap items yet.<br><br>Add <code>roadmap: my-id</code> to a note\'s frontmatter, plus optional <code>start</code>, <code>end</code>, <code>due</code>, <code>defer</code>, <code>progress</code>, <code>prerequisites</code>, <code>roadmap_parent</code>, <code>roadmap_index</code>.</div>';
   } else {
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
-      var pTxt = (it.progress == null) ? '—' : (it.progress + '%');
-      html += '<div class="rm-sidebar-row" data-roadmap-id="' + esc(it.id) + '" data-filename="' + esc(it.filename) + '" title="' + esc(it.title) + '">';
-      html += '<div class="rm-sidebar-row-title">' + esc(it.title) + '</div>';
-      html += '<div class="rm-sidebar-row-progress">' + esc(pTxt) + '</div>';
-      html += '</div>';
+      html += renderSidebarRowHTML(it, collapsedSet[it.id]);
     }
   }
-  html += '</div></aside>';
+  html += '</div>';
+  html += '</aside>';
+  // Resize splitter sits in .rm-main as a sibling so it isn't clipped by
+  // the sidebar's overflow:hidden.
+  html += '<div class="rm-sidebar-resize" id="rmSidebarResize" title="Drag to resize"></div>';
+  return html;
+}
+
+function renderSidebarRowHTML(it, isCollapsed) {
+  var depth = (it.depth || 0) + (it.indents || 0);
+  var indent = depth * 14;
+  var isTask = it.kind === 'task';
+  var pTxt = '';
+  if (!isTask) pTxt = (it.progress == null) ? '—' : (it.progress + '%');
+  var chev = '';
+  if (it.hasChildren) {
+    chev = '<button class="rm-chev' + (isCollapsed ? ' collapsed' : '') + '" data-chev-id="' + esc(it.id) + '" title="Collapse/expand"><i class="fa-solid ' + (isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down') + '"></i></button>';
+  } else {
+    chev = '<span class="rm-chev-spacer"></span>';
+  }
+  var iconStyle = it.color ? (' style="color:' + it.color + '"') : '';
+  var icon = isTask
+    ? '<i class="rm-row-icon fa-regular ' + (it.isDone ? 'fa-square-check' : (it.isChecklist ? 'fa-square' : 'fa-circle')) + '"' + iconStyle + '></i>'
+    : '<i class="rm-row-icon fa-solid fa-folder"' + iconStyle + '></i>';
+  var dragAttr = !isTask ? ' draggable="true"' : '';
+  var classes = 'rm-sidebar-row' + (isTask ? ' task' : ' project') + (it.isDone ? ' done' : '');
+  var data = ' data-roadmap-id="' + esc(it.id) + '"' +
+    ' data-kind="' + (isTask ? 'task' : 'project') + '"' +
+    ' data-filename="' + esc(it.filename) + '"' +
+    (isTask ? ' data-line-index="' + (it.lineIndex || 0) + '"' : '') +
+    ' data-parent-id="' + esc(it.parentId || '') + '"';
+  var html = '<div class="' + classes + '"' + data + dragAttr + ' style="padding-left:' + (8 + indent) + 'px" title="' + esc(it.title) + '">';
+  html += chev + icon;
+  html += '<div class="rm-sidebar-row-title">' + esc(it.title) + '</div>';
+  if (pTxt) html += '<div class="rm-sidebar-row-progress">' + esc(pTxt) + '</div>';
+  html += '</div>';
   return html;
 }
 
@@ -630,8 +958,8 @@ async function showRoadmap() {
     var data = collectRoadmapItems();
     var dataJSON = JSON.stringify(data);
 
-    var toolbar = buildToolbar(data.zoom);
-    var sidebar = buildSidebar(data.items);
+    var toolbar = buildToolbar(data.zoom, data.showCompletedTasks);
+    var sidebar = buildSidebar(data.items, data.collapsedIds, data.sidebarWidth);
     var canvas = buildCanvas(data.items);
     var fullHTML = buildFullHTML(toolbar, sidebar, canvas, dataJSON);
 
@@ -721,6 +1049,50 @@ async function onMessageFromHTMLView(actionType, data) {
         if (msg.due !== undefined) patch.due = msg.due;
         if (msg.defer !== undefined) patch.defer = msg.defer;
         writeFrontmatterPatch(note, patch);
+        await pushRefresh();
+        break;
+      }
+
+      case 'scheduleTask': {
+        // msg: { filename, lineIndex, date } — empty date clears scheduling
+        rescheduleTask(msg.filename, msg.lineIndex, msg.date || '');
+        await pushRefresh();
+        break;
+      }
+
+      case 'reorderItems': {
+        // msg: { parentId, orderedIds }
+        reorderSiblings(msg.parentId || '', msg.orderedIds || []);
+        await pushRefresh();
+        break;
+      }
+
+      case 'toggleCollapse': {
+        try {
+          var s = DataStore.settings || {};
+          var list = [];
+          try { list = JSON.parse(s.collapsedIds || '[]') || []; } catch (e) { list = []; }
+          var idx = list.indexOf(msg.id);
+          if (msg.collapsed === true) {
+            if (idx < 0) list.push(msg.id);
+          } else if (msg.collapsed === false) {
+            if (idx >= 0) list.splice(idx, 1);
+          } else {
+            if (idx >= 0) list.splice(idx, 1); else list.push(msg.id);
+          }
+          s.collapsedIds = JSON.stringify(list);
+          DataStore.settings = s;
+        } catch (e) { console.log('Roadmap: toggleCollapse error: ' + e); }
+        await pushRefresh();
+        break;
+      }
+
+      case 'toggleShowCompletedTasks': {
+        try {
+          var s2 = DataStore.settings || {};
+          s2.showCompletedTasks = String(!!msg.value);
+          DataStore.settings = s2;
+        } catch (e) { console.log('Roadmap: toggleShowCompletedTasks error: ' + e); }
         await pushRefresh();
         break;
       }
@@ -818,3 +1190,5 @@ globalThis.showRoadmap = showRoadmap;
 globalThis.refreshRoadmap = refreshRoadmap;
 globalThis.onMessageFromHTMLView = onMessageFromHTMLView;
 globalThis.toggleRoadmapCommand = toggleRoadmapCommand;
+// NotePlan invokes this after every DataStore.settings write; stub so we don't log spurious errors.
+globalThis.onSettingsUpdated = function () { };
