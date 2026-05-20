@@ -13,10 +13,40 @@ var onMessageFromPlugin;
   // ============================================
 
   var data = ROADMAP_DATA || { items: [], zoom: 'week', weekStart: 'Monday', scrollDate: '' };
-  var items = data.items || [];
+  // `allItems` is the full tree (post DFS ordering with depth/hasChildren set).
+  // `items` is the currently-visible subset after applying client-side collapse.
+  // Collapse is a pure UI concern — toggling does not round-trip to the plugin.
+  var allItems = data.items || [];
+  var collapsedSet = {};
+  (data.collapsedIds || []).forEach(function (id) { collapsedSet[id] = true; });
+  var items = applyCollapse(allItems, collapsedSet);
   var zoom = data.zoom || 'week';
   var weekStart = data.weekStart || 'Monday';
   var rowH = 36;
+
+  function applyCollapse(arr, cs) {
+    if (!cs) return arr.slice();
+    var any = false;
+    for (var k in cs) { if (cs[k]) { any = true; break; } }
+    if (!any) return arr.slice();
+    var out = [];
+    var hideUnderDepth = -1;
+    var hideUnderId = null;
+    for (var i = 0; i < arr.length; i++) {
+      var it = arr[i];
+      if (hideUnderId != null) {
+        if (it.depth > hideUnderDepth) continue;
+        hideUnderId = null;
+        hideUnderDepth = -1;
+      }
+      out.push(it);
+      if (cs[it.id] && it.hasChildren) {
+        hideUnderId = it.id;
+        hideUnderDepth = it.depth;
+      }
+    }
+    return out;
+  }
 
   // Layout config per zoom level: col width (px per day), header strategy
   var ZOOM_CONFIG = {
@@ -1056,13 +1086,19 @@ var onMessageFromPlugin;
   }
 
   function onSidebarClick(ev) {
-    // Chevron expand/collapse takes precedence
+    // Chevron expand/collapse — pure client-side toggle, no server roundtrip.
     var chev = ev.target.closest('.rm-chev');
     if (chev) {
       ev.stopPropagation();
       var cid = chev.getAttribute('data-chev-id');
-      var willCollapse = !chev.classList.contains('collapsed');
-      sendMessageToPlugin('toggleCollapse', JSON.stringify({ id: cid, collapsed: willCollapse }));
+      if (collapsedSet[cid]) delete collapsedSet[cid];
+      else collapsedSet[cid] = true;
+      items = applyCollapse(allItems, collapsedSet);
+      reflowSidebar();
+      renderAll();
+      // Persist for next session (does not block the UI; no refresh follows).
+      var arr = Object.keys(collapsedSet);
+      sendMessageToPlugin('savePrefs', JSON.stringify({ collapsedIds: JSON.stringify(arr) }));
       return;
     }
     var row = ev.target.closest('.rm-sidebar-row');
@@ -1253,7 +1289,10 @@ var onMessageFromPlugin;
   onMessageFromPlugin = function (type, payload) {
     if (type === 'ROADMAP_DATA' && payload && payload.data) {
       data = payload.data;
-      items = data.items || [];
+      allItems = data.items || [];
+      // Keep the local collapsedSet as-is so an in-flight save/refresh from
+      // another action doesn't visually expand things the user just collapsed.
+      items = applyCollapse(allItems, collapsedSet);
       reflowSidebar();
       renderAll();
       scrollPreserved();
@@ -1302,9 +1341,6 @@ var onMessageFromPlugin;
       holder.innerHTML = '<div class="rm-sidebar-empty">No roadmap items yet.</div>';
       return;
     }
-    var collapsedSet = {};
-    var c = data.collapsedIds || [];
-    for (var k = 0; k < c.length; k++) collapsedSet[c[k]] = true;
     var html = '';
     for (var i = 0; i < items.length; i++) {
       html += renderSidebarRow(items[i], collapsedSet[items[i].id]);

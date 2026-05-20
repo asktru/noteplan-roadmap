@@ -608,7 +608,8 @@ function collectRoadmapItems() {
 
   applyEphemeralRanges(raw);
   var ordered = orderByTree(raw);
-  var visible = applyCollapse(ordered, cfg.collapsedIds);
+  // Collapse is now handled entirely client-side — the server always ships
+  // the full tree so that chevron toggles never need a roundtrip.
 
   // Diagnostic counts — visible in NotePlan's plugin console.
   var nProj = 0, nTask = 0, nChild = 0, nScheduled = 0;
@@ -619,8 +620,7 @@ function collectRoadmapItems() {
   console.log('Roadmap: collected ' + nProj + ' projects (' + nChild + ' with parent), ' + nTask + ' tasks (' + nScheduled + ' scheduled). Visible: ' + visible.length);
 
   return {
-    items: visible,
-    allIds: ordered.map(function (it) { return it.id; }),
+    items: ordered,
     collapsedIds: cfg.collapsedIds,
     showCompletedTasks: cfg.showCompletedTasks,
     weekStart: cfg.weekStart,
@@ -1048,8 +1048,10 @@ async function showRoadmap() {
     var dataJSON = JSON.stringify(data);
 
     var toolbar = buildToolbar(data.zoom, data.showCompletedTasks);
-    var sidebar = buildSidebar(data.items, data.collapsedIds, data.sidebarWidth);
-    var canvas = buildCanvas(data.items);
+    // Initial DOM should already reflect the persisted collapse state.
+    var initialVisible = applyCollapse(data.items, data.collapsedIds);
+    var sidebar = buildSidebar(initialVisible, data.collapsedIds, data.sidebarWidth);
+    var canvas = buildCanvas(initialVisible);
     var fullHTML = buildFullHTML(toolbar, sidebar, canvas, dataJSON);
 
     await CommandBar.onMainThread();
@@ -1152,26 +1154,6 @@ async function onMessageFromHTMLView(actionType, data) {
       case 'reorderItems': {
         // msg: { parentId, orderedIds }
         reorderSiblings(msg.parentId || '', msg.orderedIds || []);
-        await pushRefresh();
-        break;
-      }
-
-      case 'toggleCollapse': {
-        try {
-          var s = DataStore.settings || {};
-          var list = [];
-          try { list = JSON.parse(s.collapsedIds || '[]') || []; } catch (e) { list = []; }
-          var idx = list.indexOf(msg.id);
-          if (msg.collapsed === true) {
-            if (idx < 0) list.push(msg.id);
-          } else if (msg.collapsed === false) {
-            if (idx >= 0) list.splice(idx, 1);
-          } else {
-            if (idx >= 0) list.splice(idx, 1); else list.push(msg.id);
-          }
-          s.collapsedIds = JSON.stringify(list);
-          DataStore.settings = s;
-        } catch (e) { console.log('Roadmap: toggleCollapse error: ' + e); }
         await pushRefresh();
         break;
       }
