@@ -63,9 +63,13 @@ tasks.
 - **Drag the bar body** — moves both start and end (preserving duration).
 - **Drag a bar's left/right edge** — adjusts that endpoint. Tasks are
   single-cell and only move; their edges can't be resized.
-- **Opt-click and drag a project bar onto another** — adds the source as a
-  prerequisite of the target. (Same effect as dragging the small dot on the
-  bar's right edge.)
+- **Opt-click and drag a project bar onto another project bar** — adds the
+  source as a prerequisite of the target. (Same effect as dragging the small
+  dot on the bar's right edge.)
+- **Opt-click and drag a task pill onto another task pill** — same idea, but
+  uses NotePlan's blockID syncing under the hood: the source task is given a
+  `^blockID` (if it doesn't have one), and the target task gains an
+  `@after(<blockID>)` marker in its content. Click the arrow to remove it.
 - **Click a dependency arrow** — confirms and removes the prerequisite.
 
 ### On an empty row

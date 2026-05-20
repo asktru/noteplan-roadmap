@@ -132,7 +132,13 @@ var onMessageFromPlugin;
   // ============================================
 
   function getItemRange(it) {
-    // Returns { start, end } or null if neither is set
+    // For tasks, the bar is the single scheduled day. For projects, the
+    // [start, end] range — with either end implied from the other if only one
+    // is set. Returns null when no positional anchor exists.
+    if (it.kind === 'task') {
+      var sp = partsFromISO(it.scheduled);
+      return sp ? { start: sp, end: sp } : null;
+    }
     var s = partsFromISO(it.start);
     var e = partsFromISO(it.end);
     if (!s && !e) return null;
@@ -479,8 +485,11 @@ var onMessageFromPlugin;
         var sourceAbove = preqRow < r;
         if (preqRow === r) continue; // skip self-row (shouldn't happen)
 
-        // X where the arrow enters the target bar
-        var enterX = targetX_start + ENTER_INSET_X;
+        // X where the arrow enters the target bar — clamp inside the bar
+        // (matters for very narrow task pills at the quarter zoom)
+        var targetEndX = dateToX(addDaysParts(iRange.end, 1));
+        var enterX = Math.min(targetX_start + ENTER_INSET_X, targetEndX - 4);
+        if (enterX < targetX_start) enterX = targetX_start;
         // Out from source then descend/ascend; if target starts before source ends,
         // route around to avoid crossing through the source bar.
         var stepX = sourceX + STEP_OUT;
@@ -700,9 +709,10 @@ var onMessageFromPlugin;
     var handle = ev.target.closest('.rm-bar-handle');
     var bar = ev.target.closest('.rm-bar');
     if (bar) {
-      // Opt/Alt + drag on a project bar starts a dependency draft instead of
-      // moving the bar. Dependencies only originate from project bars.
-      if (ev.altKey && !bar.classList.contains('task')) {
+      // Opt/Alt + drag from a bar starts a dependency draft. Projects link to
+      // projects (via frontmatter `prerequisites`); tasks link to tasks (via
+      // `@after(blockId)` markers in the task content).
+      if (ev.altKey) {
         startDepDraft(ev, bar);
         return;
       }
@@ -981,13 +991,28 @@ var onMessageFromPlugin;
     if (!depDraft) return;
     var bar = ev.target.closest('.rm-bar');
     if (bar) {
-      if (bar.classList.contains('task')) {
-        showToast('Dependencies link projects, not tasks');
-      } else {
-        var targetId = bar.getAttribute('data-id');
-        if (targetId && targetId !== depDraft.sourceId) {
-          sendMessageToPlugin('addPrerequisite', JSON.stringify({ id: targetId, prerequisite: depDraft.sourceId }));
-          showToast('Linked: ' + depDraft.sourceId + ' → ' + targetId);
+      var targetId = bar.getAttribute('data-id');
+      var sourceId = depDraft.sourceId;
+      if (targetId && targetId !== sourceId) {
+        var source = lookupItemById(sourceId);
+        var target = lookupItemById(targetId);
+        var sourceIsTask = source && source.kind === 'task';
+        var targetIsTask = target && target.kind === 'task';
+        if (sourceIsTask && targetIsTask) {
+          sendMessageToPlugin('addTaskDependency', JSON.stringify({
+            sourceFilename: source.filename,
+            sourceLineIndex: source.lineIndex,
+            targetFilename: target.filename,
+            targetLineIndex: target.lineIndex,
+          }));
+          showToast('Linked task → task');
+        } else if (!sourceIsTask && !targetIsTask) {
+          sendMessageToPlugin('addPrerequisite', JSON.stringify({
+            id: targetId, prerequisite: sourceId,
+          }));
+          showToast('Linked: ' + sourceId + ' → ' + targetId);
+        } else {
+          showToast('Dependencies link items of the same kind');
         }
       }
     }
@@ -1001,8 +1026,23 @@ var onMessageFromPlugin;
     var target = grp.getAttribute('data-target');
     var source = grp.getAttribute('data-source');
     if (!target || !source) return;
-    if (confirm('Remove dependency "' + source + '" → "' + target + '"?')) {
-      sendMessageToPlugin('removePrerequisite', JSON.stringify({ id: target, prerequisite: source }));
+    var targetIsTask = target.indexOf('task:') === 0;
+    var sourceIsTask = source.indexOf('task:') === 0;
+    if (!confirm('Remove this dependency?')) return;
+    if (targetIsTask && sourceIsTask) {
+      var tgtItem = lookupItemById(target);
+      if (!tgtItem || !tgtItem.prereqBlockIds) return;
+      var blockId = tgtItem.prereqBlockIds[source];
+      if (!blockId) return;
+      sendMessageToPlugin('removeTaskDependency', JSON.stringify({
+        filename: tgtItem.filename,
+        lineIndex: tgtItem.lineIndex,
+        blockId: blockId,
+      }));
+    } else {
+      sendMessageToPlugin('removePrerequisite', JSON.stringify({
+        id: target, prerequisite: source,
+      }));
     }
   }
 

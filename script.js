@@ -343,16 +343,46 @@ function resolveColor(value) {
 // Matches `>2026-06-15` (preferred) or NotePlan's `@YYYY-MM-DD` variant.
 var SCHEDULED_RX = />(\d{4}-\d{2}-\d{2})\b/;
 
+// `@after(<blockId>)` encodes a task-to-task dependency. The id inside is the
+// prerequisite task's NotePlan blockID (the `^XXXX` minus the caret). Multiple
+// markers on the same task = multiple prerequisites.
+var AFTER_RX = /@after\(([^)]+)\)/g;
+// Standalone block-ID tokens that NotePlan appends at the end of a task line.
+var BLOCK_ID_TOKEN_RX = /\s*\^[A-Za-z0-9]+/g;
+
 function extractScheduledFromContent(content) {
   if (!content) return '';
   var m = String(content).match(SCHEDULED_RX);
   return m ? m[1] : '';
 }
 
+function extractAfterRefs(content) {
+  var refs = [];
+  if (!content) return refs;
+  var s = String(content);
+  var rx = new RegExp(AFTER_RX.source, 'g');
+  var m;
+  while ((m = rx.exec(s)) !== null) {
+    var id = (m[1] || '').trim();
+    if (id.charAt(0) === '^') id = id.substring(1);
+    if (id) refs.push(id);
+  }
+  return refs;
+}
+
+function normalizeBlockId(raw) {
+  if (!raw) return '';
+  var s = String(raw).trim();
+  if (s.charAt(0) === '^') s = s.substring(1);
+  return s;
+}
+
 function stripTaskMarkers(content) {
   return String(content || '')
     .replace(/>(\d{4}-\d{2}-\d{2})\b/g, '')
     .replace(/@done\([^)]*\)/g, '')
+    .replace(/@after\([^)]*\)/g, '')
+    .replace(BLOCK_ID_TOKEN_RX, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
@@ -425,6 +455,9 @@ function buildTaskItemsForNote(note, projectId, showCompleted, projectColor) {
     if (done && !showCompleted) continue;
     var raw = String(p.content == null ? '' : p.content);
     var scheduled = extractScheduledFromContent(raw);
+    var afterRefs = extractAfterRefs(raw);
+    var blockId = '';
+    try { blockId = normalizeBlockId(p.blockId); } catch (e) { blockId = ''; }
     var title = stripTaskMarkers(raw);
     if (!title) continue;
     out.push({
@@ -440,6 +473,8 @@ function buildTaskItemsForNote(note, projectId, showCompleted, projectColor) {
       isDone: done,
       isChecklist: (t === 'checklist' || t === 'checklistScheduled' || t === 'checklistDone'),
       color: projectColor || '',
+      blockId: blockId,
+      afterRefs: afterRefs, // raw block IDs from @after(...) markers
     });
   }
   var typeStr = '';
@@ -447,6 +482,41 @@ function buildTaskItemsForNote(note, projectId, showCompleted, projectColor) {
   for (var k = 0; k < tkeys.length; k++) typeStr += (k ? ', ' : '') + tkeys[k] + '=' + typeCounts[tkeys[k]];
   console.log('Roadmap: ' + note.filename + ' (' + ps.length + ' paragraphs) types: ' + typeStr + ' → ' + out.length + ' tasks');
   return out;
+}
+
+// Resolve `@after(blockId)` references on tasks into actual task ids by
+// building a `blockId → taskId` map across all tasks. The result is the same
+// `prerequisites` field projects use, so the existing arrow renderer just
+// works for tasks too. A side map `prereqBlockIds` is kept so the UI can
+// later locate and strip the matching marker on removal.
+function resolveTaskDependencies(rawItems) {
+  var blockIdToTaskId = {};
+  for (var i = 0; i < rawItems.length; i++) {
+    var it = rawItems[i];
+    if (it.kind === 'task' && it.blockId) {
+      blockIdToTaskId[it.blockId] = it.id;
+    }
+  }
+  for (var j = 0; j < rawItems.length; j++) {
+    var t = rawItems[j];
+    if (t.kind !== 'task') continue;
+    var refs = t.afterRefs || [];
+    if (!refs.length) continue;
+    var prereqs = [];
+    var blockMap = {};
+    for (var r = 0; r < refs.length; r++) {
+      var ref = refs[r];
+      var matchedId = blockIdToTaskId[ref];
+      if (matchedId && matchedId !== t.id) {
+        prereqs.push(matchedId);
+        blockMap[matchedId] = ref;
+      }
+    }
+    if (prereqs.length) {
+      t.prerequisites = prereqs;
+      t.prereqBlockIds = blockMap;
+    }
+  }
 }
 
 // For projects without explicit `start` and/or `end`, derive the missing
@@ -632,6 +702,7 @@ function collectRoadmapItems() {
     for (var t = 0; t < tasks.length; t++) raw.push(tasks[t]);
   }
 
+  resolveTaskDependencies(raw);
   applyEphemeralRanges(raw);
   var ordered = orderByTree(raw);
   // Collapse is now handled entirely client-side — the server always ships
@@ -1370,6 +1441,74 @@ async function onMessageFromHTMLView(actionType, data) {
         else {
           var n = parseInt(v, 10);
           if (!isNaN(n)) writeFrontmatterPatch(note2, { progress: String(Math.max(0, Math.min(100, n))) });
+        }
+        await pushRefresh();
+        break;
+      }
+
+      case 'addTaskDependency': {
+        // msg: { sourceFilename, sourceLineIndex, targetFilename, targetLineIndex }
+        var srcNote = findNoteByFilename(msg.sourceFilename);
+        var tgtNote = findNoteByFilename(msg.targetFilename);
+        if (!srcNote || !tgtNote) break;
+        var srcLine = parseInt(msg.sourceLineIndex, 10);
+        var tgtLine = parseInt(msg.targetLineIndex, 10);
+        var srcParas = srcNote.paragraphs || [];
+        var tgtParas = tgtNote.paragraphs || [];
+        if (isNaN(srcLine) || isNaN(tgtLine) || srcLine < 0 || tgtLine < 0
+            || srcLine >= srcParas.length || tgtLine >= tgtParas.length) break;
+        var srcPara = srcParas[srcLine];
+        var tgtPara = tgtParas[tgtLine];
+        if (!srcPara || !tgtPara) break;
+        if (srcNote.filename === tgtNote.filename && srcLine === tgtLine) break;
+
+        // Ensure the source paragraph has a blockID we can reference
+        var srcBlock = normalizeBlockId(srcPara.blockId);
+        if (!srcBlock) {
+          try {
+            srcNote.addBlockID(srcPara);
+            srcNote.updateParagraph(srcPara);
+            // Re-read since blockId is now appended to the content
+            srcParas = srcNote.paragraphs || [];
+            srcPara = srcParas[srcLine] || srcPara;
+            srcBlock = normalizeBlockId(srcPara.blockId);
+          } catch (e) {
+            console.log('Roadmap: addBlockID failed: ' + e);
+          }
+        }
+        if (!srcBlock) break;
+
+        // Append @after(srcBlock) to the target paragraph (if not already there)
+        var tgtContent = String(tgtPara.content == null ? '' : tgtPara.content);
+        if (tgtContent.indexOf('@after(' + srcBlock + ')') < 0) {
+          tgtPara.content = tgtContent.replace(/\s+$/, '') + ' @after(' + srcBlock + ')';
+          try { tgtNote.updateParagraph(tgtPara); } catch (e) { console.log('Roadmap: updateParagraph (target) failed: ' + e); }
+        }
+        try { DataStore.updateCache(srcNote, true); } catch (e) { }
+        try { DataStore.updateCache(tgtNote, true); } catch (e) { }
+        await pushRefresh();
+        break;
+      }
+
+      case 'removeTaskDependency': {
+        // msg: { filename, lineIndex, blockId }
+        var rNote = findNoteByFilename(msg.filename);
+        if (!rNote) break;
+        var rLine = parseInt(msg.lineIndex, 10);
+        var rParas = rNote.paragraphs || [];
+        if (isNaN(rLine) || rLine < 0 || rLine >= rParas.length) break;
+        var rPara = rParas[rLine];
+        if (!rPara) break;
+        var bid = String(msg.blockId || '').trim();
+        if (!bid) break;
+        // Strip the exact `@after(<bid>)` substring plus any surrounding whitespace
+        var rContent = String(rPara.content == null ? '' : rPara.content);
+        var rxRemove = new RegExp('\\s*@after\\(\\^?' + bid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\)', 'g');
+        var newContent = rContent.replace(rxRemove, '').replace(/\s{2,}/g, ' ').replace(/\s+$/, '');
+        if (newContent !== rContent) {
+          rPara.content = newContent;
+          try { rNote.updateParagraph(rPara); } catch (e) { console.log('Roadmap: remove dep updateParagraph failed: ' + e); }
+          try { DataStore.updateCache(rNote, true); } catch (e) { }
         }
         await pushRefresh();
         break;
