@@ -72,7 +72,8 @@ tasks.
   uses NotePlan's blockID syncing under the hood: the source task is given a
   `^blockID` (if it doesn't have one), and the target task gains an
   `@after(<blockID>)` marker in its content. Click the arrow to remove it.
-- **Click a dependency arrow** — confirms and removes the prerequisite.
+- **Click a dependency arrow** — removes that prerequisite. Re-create by
+  Opt+dragging the bars again.
 
 ### On an empty row
 

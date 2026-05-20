@@ -1026,9 +1026,10 @@ var onMessageFromPlugin;
     var target = grp.getAttribute('data-target');
     var source = grp.getAttribute('data-source');
     if (!target || !source) return;
+    // No confirmation dialog — `confirm()` is not surfaced in NotePlan's HTML
+    // view, and the action is easily reversible by Opt+dragging again.
     var targetIsTask = target.indexOf('task:') === 0;
     var sourceIsTask = source.indexOf('task:') === 0;
-    if (!confirm('Remove this dependency?')) return;
     if (targetIsTask && sourceIsTask) {
       var tgtItem = lookupItemById(target);
       if (!tgtItem || !tgtItem.prereqBlockIds) return;
@@ -1044,6 +1045,7 @@ var onMessageFromPlugin;
         id: target, prerequisite: source,
       }));
     }
+    showToast('Removed dependency · Opt+drag to restore');
   }
 
   // ============================================
