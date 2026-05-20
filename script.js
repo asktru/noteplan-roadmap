@@ -1058,27 +1058,27 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
     '  <div class="rm-tooltip" id="rmTooltip"></div>\n' +
     '  <div class="rm-toast" id="rmToast"></div>\n' +
     '  <div class="rm-context-menu" id="rmContextMenu" role="menu">\n' +
-    /* Bar contexts: open the underlying note */
-    '    <button data-action="openNote" data-ctx="bar-project bar-task"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open note</button>\n' +
-    '    <hr data-ctx="bar-project bar-task">\n' +
-    /* Sidebar context: create tasks / subprojects */
-    '    <button data-action="appendTask" data-ctx="sidebar"><i class="fa-solid fa-plus"></i> Add task at bottom</button>\n' +
-    '    <button data-action="prependTask" data-ctx="sidebar"><i class="fa-solid fa-arrow-turn-up"></i> Add task at top</button>\n' +
-    '    <hr data-ctx="sidebar">\n' +
-    '    <button data-action="addSubproject" data-ctx="sidebar"><i class="fa-solid fa-folder-plus"></i> Add subproject</button>\n' +
-    /* Bar-project: reset individual dates (only shown when set) and clear-all */
-    '    <hr data-ctx="bar-project" data-needs="any-date">\n' +
-    '    <button data-action="resetStart" data-ctx="bar-project" data-needs="start"><i class="fa-regular fa-circle-xmark"></i> Reset start</button>\n' +
-    '    <button data-action="resetEnd" data-ctx="bar-project" data-needs="end"><i class="fa-regular fa-circle-xmark"></i> Reset end</button>\n' +
-    '    <button data-action="resetDue" data-ctx="bar-project" data-needs="due"><i class="fa-regular fa-circle-xmark"></i> Reset due</button>\n' +
-    '    <button data-action="resetDefer" data-ctx="bar-project" data-needs="defer"><i class="fa-regular fa-circle-xmark"></i> Reset defer</button>\n' +
-    '    <button data-action="resetAllDates" data-ctx="bar-project" data-needs="any-date"><i class="fa-solid fa-eraser"></i> Clear all dates</button>\n' +
-    /* Bar-task: unschedule */
-    '    <button data-action="unscheduleTask" data-ctx="bar-task" data-needs="scheduled"><i class="fa-solid fa-eraser"></i> Unschedule</button>\n' +
-    /* Color picker — sidebar and bar-project */
-    '    <hr data-ctx="sidebar bar-project">\n' +
-    '    <div class="rm-color-header" data-ctx="sidebar bar-project">Color</div>\n' +
-    '    <div class="rm-color-grid" id="rmColorGrid" data-ctx="sidebar bar-project">\n' +
+    /* Open the underlying note — applies to both projects and tasks */
+    '    <button data-action="openNote" data-ctx="project task"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open note</button>\n' +
+    '    <hr data-ctx="project task">\n' +
+    /* Project: create tasks / subprojects */
+    '    <button data-action="appendTask" data-ctx="project"><i class="fa-solid fa-plus"></i> Add task at bottom</button>\n' +
+    '    <button data-action="prependTask" data-ctx="project"><i class="fa-solid fa-arrow-turn-up"></i> Add task at top</button>\n' +
+    '    <hr data-ctx="project">\n' +
+    '    <button data-action="addSubproject" data-ctx="project"><i class="fa-solid fa-folder-plus"></i> Add subproject</button>\n' +
+    /* Project: reset individual dates (only shown when set) and clear-all */
+    '    <hr data-ctx="project" data-needs="any-date">\n' +
+    '    <button data-action="resetStart" data-ctx="project" data-needs="start"><i class="fa-regular fa-circle-xmark"></i> Reset start</button>\n' +
+    '    <button data-action="resetEnd" data-ctx="project" data-needs="end"><i class="fa-regular fa-circle-xmark"></i> Reset end</button>\n' +
+    '    <button data-action="resetDue" data-ctx="project" data-needs="due"><i class="fa-regular fa-circle-xmark"></i> Reset due</button>\n' +
+    '    <button data-action="resetDefer" data-ctx="project" data-needs="defer"><i class="fa-regular fa-circle-xmark"></i> Reset defer</button>\n' +
+    '    <button data-action="resetAllDates" data-ctx="project" data-needs="any-date"><i class="fa-solid fa-eraser"></i> Clear all dates</button>\n' +
+    /* Task: unschedule */
+    '    <button data-action="unscheduleTask" data-ctx="task" data-needs="scheduled"><i class="fa-solid fa-eraser"></i> Unschedule</button>\n' +
+    /* Color picker — projects only */
+    '    <hr data-ctx="project">\n' +
+    '    <div class="rm-color-header" data-ctx="project">Color</div>\n' +
+    '    <div class="rm-color-grid" id="rmColorGrid" data-ctx="project">\n' +
     '      <button class="rm-color-swatch clear" data-color="" title="No color"></button>\n' +
          buildPickerSwatchesHTML() +
     '    </div>\n' +

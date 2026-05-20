@@ -686,6 +686,10 @@ var onMessageFromPlugin;
   var rangeDrag = null; // { rowIdx, startX, item, anchorDate, endDate, el }
 
   function onCanvasMouseDown(ev) {
+    // Only react to the primary (left) button — right-click and ctrl-click
+    // are handled by the contextmenu listener instead, and shouldn't kick off
+    // a drag or be interpreted as a click-to-open-note.
+    if (ev.button !== 0 || ev.ctrlKey) return;
     var dot = ev.target.closest('[data-link-dot]');
     if (dot) {
       var barFromDot = dot.closest('.rm-bar');
@@ -1090,15 +1094,17 @@ var onMessageFromPlugin;
   function onSidebarContextMenu(ev) {
     var row = ev.target.closest('.rm-sidebar-row');
     if (!row) return;
-    if (row.getAttribute('data-kind') !== 'project') return;
     ev.preventDefault();
     hideTooltip();
     var id = row.getAttribute('data-roadmap-id');
     var item = lookupItemById(id);
+    if (!item) return;
+    var lineIndex = row.getAttribute('data-line-index');
     showContextMenu(ev.clientX, ev.clientY, {
-      kind: 'sidebar',
+      kind: item.kind,
       id: id,
       filename: row.getAttribute('data-filename'),
+      lineIndex: lineIndex ? parseInt(lineIndex, 10) : item.lineIndex,
       item: item,
     });
   }
@@ -1112,7 +1118,7 @@ var onMessageFromPlugin;
     if (!item) return;
     hideTooltip();
     showContextMenu(ev.clientX, ev.clientY, {
-      kind: item.kind === 'task' ? 'bar-task' : 'bar-project',
+      kind: item.kind,
       id: id,
       filename: item.filename,
       lineIndex: item.lineIndex,
