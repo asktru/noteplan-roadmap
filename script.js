@@ -423,6 +423,78 @@ function buildTaskItemsForNote(note, projectId, showCompleted, projectColor) {
   return out;
 }
 
+// For projects without explicit `start` and/or `end`, derive the missing
+// bound(s) from the entire subtree: scheduled tasks of this project plus the
+// resolved ranges of nested sub-projects (recursively). The bar is then
+// flagged `ephemeral` so the renderer can distinguish it from an explicit
+// range. Dragging an ephemeral bar persists the derived dates, promoting it
+// to an explicit bar.
+//
+// Implemented as a single post-order DFS: by the time we compute a parent's
+// range, every child project has already had its start/end filled in if
+// possible, so the parent simply unions over its direct children. O(N).
+function applyEphemeralRanges(rawItems) {
+  var byId = {};
+  var children = {};
+  for (var i = 0; i < rawItems.length; i++) {
+    byId[rawItems[i].id] = rawItems[i];
+    var pid = rawItems[i].parentId || '';
+    if (!children[pid]) children[pid] = [];
+    children[pid].push(rawItems[i]);
+  }
+
+  var visited = {}; // guard against malformed cycles
+
+  function resolve(id) {
+    if (visited[id]) return;
+    visited[id] = true;
+    var it = byId[id];
+    if (!it || it.kind !== 'project') return;
+
+    // Resolve all child projects first (post-order)
+    var kids = children[id] || [];
+    for (var k = 0; k < kids.length; k++) {
+      if (kids[k].kind === 'project') resolve(kids[k].id);
+    }
+
+    if (it.start && it.end) return; // explicit range; nothing to derive
+
+    // Union descendants' contributions
+    var min = '', max = '';
+    for (var k2 = 0; k2 < kids.length; k2++) {
+      var c = kids[k2];
+      var cMin = '', cMax = '';
+      if (c.kind === 'task') {
+        cMin = cMax = c.scheduled || '';
+      } else {
+        // Child project — by now start/end are filled if any descendant had dates
+        cMin = c.start || '';
+        cMax = c.end || '';
+      }
+      if (cMin && (!min || cMin < min)) min = cMin;
+      if (cMax && (!max || cMax > max)) max = cMax;
+    }
+    if (!min && !max) return;
+
+    if (!it.start && !it.end) {
+      it.start = min || max;
+      it.end = max || min;
+      it.ephemeralStart = true; it.ephemeralEnd = true;
+    } else if (!it.start) {
+      it.start = (min && min < it.end) ? min : it.end;
+      it.ephemeralStart = true;
+    } else if (!it.end) {
+      it.end = (max && max > it.start) ? max : it.start;
+      it.ephemeralEnd = true;
+    }
+    it.ephemeral = true;
+  }
+
+  for (var ii = 0; ii < rawItems.length; ii++) {
+    if (rawItems[ii].kind === 'project') resolve(rawItems[ii].id);
+  }
+}
+
 function orderByTree(rawItems) {
   // Group children by parentId; preserve only items whose parents (if specified) resolve.
   var byId = {};
@@ -534,6 +606,7 @@ function collectRoadmapItems() {
     for (var t = 0; t < tasks.length; t++) raw.push(tasks[t]);
   }
 
+  applyEphemeralRanges(raw);
   var ordered = orderByTree(raw);
   var visible = applyCollapse(ordered, cfg.collapsedIds);
 
@@ -750,6 +823,8 @@ function getInlineCSS() {
     '.rm-bar.overdue { border-color: var(--rm-danger); }\n' +
     '.rm-bar.complete { background: color-mix(in srgb, var(--rm-ok) 30%, var(--rm-bg-card)); border-color: var(--rm-ok); }\n' +
     '.rm-bar.placeholder { border-style: dotted; background: transparent; opacity: 0.55; }\n' +
+    '.rm-bar.ephemeral { border-style: dashed; background: transparent; }\n' +
+    '.rm-bar.ephemeral .rm-bar-label { font-style: italic; color: var(--rm-text-muted); }\n' +
     '.rm-bar.task { top: 8px; height: calc(var(--rm-row-h) - 16px); border-radius: 50px; background: var(--rm-bg-card); border: 1.5px solid var(--rm-accent); }\n' +
     '.rm-bar.task.done { border-style: dashed; opacity: 0.55; background: transparent; }\n' +
     '.rm-bar.task.checklist { border-radius: 4px; }\n' +

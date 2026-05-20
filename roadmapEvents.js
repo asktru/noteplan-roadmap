@@ -343,7 +343,11 @@ var onMessageFromPlugin;
           var x2 = dateToX(addDaysParts(range.end, 1)); // exclusive
           var w = Math.max(dayPx * 0.6, x2 - x1);
           var classes = 'rm-bar';
-          if (!it.hasStart || !it.hasEnd) classes += ' placeholder';
+          if (it.ephemeral) {
+            classes += ' ephemeral';
+          } else if (!it.hasStart || !it.hasEnd) {
+            classes += ' placeholder';
+          }
           if (it.defer) {
             var defp = partsFromISO(it.defer);
             if (defp && comparePartsLT(todayParts(), defp)) classes += ' deferred';
@@ -601,8 +605,8 @@ var onMessageFromPlugin;
       else rows += row('Scheduled', '— (drag a cell to set)');
       if (it.isDone) rows += row('Status', 'Done');
     } else {
-      if (it.start) rows += row('Start', it.start);
-      if (it.end) rows += row('End', it.end);
+      if (it.start) rows += row('Start', it.start + (it.ephemeralStart ? ' (from tasks)' : ''));
+      if (it.end) rows += row('End', it.end + (it.ephemeralEnd ? ' (from tasks)' : ''));
       if (it.due) rows += row('Due', it.due);
       if (it.defer) rows += row('Defer', it.defer);
       if (it.progress != null) rows += row('Progress', it.progress + '%' + (it.progressExplicit ? '' : ' (auto)'));

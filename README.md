@@ -96,6 +96,10 @@ tasks.
 
 - **Solid bar** — start + end both set.
 - **Dotted bar** — only one of start/end set; the other is inferred.
+- **Dashed bar with italic label** — *ephemeral*. The project has no
+  explicit start/end; the bar spans the dates of its scheduled tasks **and
+  any nested sub-projects** (recursively). Drag or resize it to persist
+  explicit start/end.
 - **Dashed bar** — deferred; `today < defer`.
 - **Red border** — overdue against `due`.
 - **Green tint** — progress = 100%.
