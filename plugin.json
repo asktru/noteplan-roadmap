@@ -7,6 +7,8 @@
   "plugin.icon": "🗺️",
   "plugin.author": "asktru",
   "plugin.version": "1.0.0",
+  "plugin.lastUpdateInfo": "First release. Drag-schedule from a unified Gantt timeline, with hierarchy via roadmap_parent, task pills inheriting their project's icon-color, OmniPlan-style dependency arrows (project↔project via prerequisites; task↔task via NotePlan blockIDs and @after markers), ephemeral bars derived from scheduled tasks and nested subtrees, and right-click menus on every row and bar.",
+  "plugin.releaseInfoURL": "https://github.com/asktru/noteplan-roadmap/releases",
   "plugin.script": "script.js",
   "plugin.isRemote": "false",
   "plugin.dependsOn": [
