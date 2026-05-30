@@ -89,6 +89,12 @@
       "alias": ["roadmap add", "roadmap remove", "toggle roadmap"],
       "description": "Toggle the current note's presence on the Roadmap by adding/removing the `roadmap:` frontmatter key.",
       "jsFunction": "toggleRoadmapCommand"
+    },
+    {
+      "name": "onUpdateOrInstall",
+      "description": "Install dependencies after install/update",
+      "jsFunction": "onUpdateOrInstall",
+      "hidden": true
     }
   ]
 }
