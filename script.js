@@ -3,6 +3,7 @@
 
 var PLUGIN_ID = 'asktru.Roadmap';
 var WINDOW_ID = 'asktru.Roadmap.dashboard';
+var WINDOW_ID_FLOATING = 'asktru.Roadmap.dashboardWindow';
 
 // ============================================
 // SETTINGS
@@ -1140,7 +1141,7 @@ function buildCanvas(items) {
   return html;
 }
 
-function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
+function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON, windowID) {
   var themeCSS = getThemeCSS();
   var pluginCSS = getInlineCSS();
   var themeAttr = isLightTheme() ? 'light' : 'dark';
@@ -1184,7 +1185,7 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
          buildPickerSwatchesHTML() +
     '    </div>\n' +
     '  </div>\n' +
-    '  <script>var receivingPluginID="asktru.Roadmap";\nvar ROADMAP_DATA=' + dataJSON + ';\n<\/script>\n' +
+    '  <script>var receivingPluginID="asktru.Roadmap";\nvar npWindowID=\'' + (windowID || WINDOW_ID) + '\';\nvar ROADMAP_DATA=' + dataJSON + ';\n<\/script>\n' +
     '  <script type="text/javascript" src="roadmapEvents.js"><\/script>\n' +
     '  <script type="text/javascript" src="../np.Shared/pluginToHTMLCommsBridge.js"><\/script>\n' +
     '</body>\n</html>';
@@ -1194,10 +1195,13 @@ function buildFullHTML(toolbarHTML, sidebarHTML, canvasHTML, dataJSON) {
 // MAIN ENTRY
 // ============================================
 
-async function showRoadmap() {
+async function showRoadmap(targetWindowID) {
   try {
     CommandBar.showLoading(true, 'Building roadmap…');
     await CommandBar.onAsyncThread();
+
+    var winID = targetWindowID || WINDOW_ID;
+    var isFloating = winID === WINDOW_ID_FLOATING;
 
     var data = collectRoadmapItems();
     var dataJSON = JSON.stringify(data);
@@ -1207,40 +1211,53 @@ async function showRoadmap() {
     var initialVisible = applyCollapse(data.items, data.collapsedIds);
     var sidebar = buildSidebar(initialVisible, data.collapsedIds, data.sidebarWidth);
     var canvas = buildCanvas(initialVisible);
-    var fullHTML = buildFullHTML(toolbar, sidebar, canvas, dataJSON);
+    var fullHTML = buildFullHTML(toolbar, sidebar, canvas, dataJSON, winID);
 
     await CommandBar.onMainThread();
     CommandBar.showLoading(false);
 
     var winOptions = {
-      customId: WINDOW_ID,
-      id: WINDOW_ID,
-      savedFilename: '../../asktru.Roadmap/roadmap.html',
+      customId: winID,
+      id: winID,
+      savedFilename: isFloating ? '../../asktru.Roadmap/roadmap_window.html' : '../../asktru.Roadmap/roadmap.html',
       shouldFocus: true,
       reuseUsersWindowRect: true,
       headerBGColor: 'transparent',
       autoTopPadding: true,
       showReloadButton: true,
       reloadPluginID: PLUGIN_ID,
-      reloadCommandName: 'Roadmap',
+      reloadCommandName: isFloating ? 'Open in separate window' : 'Open in sidebar',
       icon: 'fa-chart-gantt',
       iconColor: '#0EA5E9',
     };
 
-    var result = null;
-    try {
-      result = await HTMLView.showInMainWindow(fullHTML, 'Roadmap', winOptions);
-    } catch (e) {
-      console.log('Roadmap: showInMainWindow threw: ' + e);
-    }
-    if (!result || !result.success) {
+    if (isFloating) {
+      winOptions.width = 1400;
+      winOptions.height = 850;
       try { await HTMLView.showWindowWithOptions(fullHTML, 'Roadmap', winOptions); }
-      catch (e2) { console.log('Roadmap: showWindowWithOptions threw: ' + e2); }
+      catch (e) { console.log('Roadmap: showWindowWithOptions threw: ' + e); }
+    } else {
+      var result = null;
+      try {
+        result = await HTMLView.showInMainWindow(fullHTML, 'Roadmap', winOptions);
+      } catch (e) {
+        console.log('Roadmap: showInMainWindow threw: ' + e);
+      }
+      if (!result || !result.success) {
+        try { await HTMLView.showWindowWithOptions(fullHTML, 'Roadmap', winOptions); }
+        catch (e2) { console.log('Roadmap: showWindowWithOptions threw: ' + e2); }
+      }
     }
   } catch (err) {
     CommandBar.showLoading(false);
     console.log('Roadmap error: ' + String(err));
   }
+}
+
+// Open the same chart in a separate (floating) window, distinct from the
+// sidebar embed so the two views stay independently routed.
+async function showRoadmapWindow() {
+  await showRoadmap(WINDOW_ID_FLOATING);
 }
 
 async function refreshRoadmap() { await showRoadmap(); }
@@ -1264,14 +1281,15 @@ async function sendToHTMLWindow(windowId, type, data) {
   } catch (err) { }
 }
 
-async function pushRefresh() {
+async function pushRefresh(targetWindowID) {
   var data = collectRoadmapItems();
-  await sendToHTMLWindow(WINDOW_ID, 'ROADMAP_DATA', { data: data });
+  await sendToHTMLWindow(targetWindowID || WINDOW_ID, 'ROADMAP_DATA', { data: data });
 }
 
 async function onMessageFromHTMLView(actionType, data) {
   try {
     var msg = (typeof data === 'string') ? JSON.parse(data) : (data || {});
+    var replyWindowID = (msg && msg._windowID) || WINDOW_ID;
 
     switch (actionType) {
       case 'openNote':
@@ -1295,21 +1313,21 @@ async function onMessageFromHTMLView(actionType, data) {
         if (msg.due !== undefined) patch.due = msg.due;
         if (msg.defer !== undefined) patch.defer = msg.defer;
         writeFrontmatterPatch(note, patch);
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
       case 'scheduleTask': {
         // msg: { filename, lineIndex, date } — empty date clears scheduling
         rescheduleTask(msg.filename, msg.lineIndex, msg.date || '');
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
       case 'reorderItems': {
         // msg: { parentId, orderedIds }
         reorderSiblings(msg.parentId || '', msg.orderedIds || []);
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1329,7 +1347,7 @@ async function onMessageFromHTMLView(actionType, data) {
         else if (actionType === 'resetDue') resetPatch.due = '';
         else if (actionType === 'resetDefer') resetPatch.defer = '';
         writeFrontmatterPatch(nR, resetPatch);
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1337,7 +1355,7 @@ async function onMessageFromHTMLView(actionType, data) {
         if (msg.filename && msg.lineIndex != null) {
           rescheduleTask(msg.filename, parseInt(msg.lineIndex, 10), '');
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1356,7 +1374,7 @@ async function onMessageFromHTMLView(actionType, data) {
         for (var ti = 0; ti < targets.length; ti++) {
           writeFrontmatterPatch(targets[ti], { 'icon-color': newColor });
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1372,7 +1390,7 @@ async function onMessageFromHTMLView(actionType, data) {
           else note.prependParagraph(content, 'open');
           try { DataStore.updateCache(note, true); } catch (e) { }
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1386,7 +1404,7 @@ async function onMessageFromHTMLView(actionType, data) {
 
         await CommandBar.onMainThread();
         var subTitle = await CommandBar.showInput('Subproject title', "Create '%@'");
-        if (!subTitle || !String(subTitle).trim()) { await pushRefresh(); break; }
+        if (!subTitle || !String(subTitle).trim()) { await pushRefresh(replyWindowID); break; }
         subTitle = String(subTitle).trim();
 
         // Derive a unique roadmap id from the title (slug)
@@ -1419,7 +1437,7 @@ async function onMessageFromHTMLView(actionType, data) {
         if (newFilename) {
           try { DataStore.updateCache(findNoteByFilename(newFilename), true); } catch (e) { }
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1429,7 +1447,7 @@ async function onMessageFromHTMLView(actionType, data) {
           s2.showCompletedTasks = String(!!msg.value);
           DataStore.settings = s2;
         } catch (e) { console.log('Roadmap: toggleShowCompletedTasks error: ' + e); }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1442,7 +1460,7 @@ async function onMessageFromHTMLView(actionType, data) {
           var n = parseInt(v, 10);
           if (!isNaN(n)) writeFrontmatterPatch(note2, { progress: String(Math.max(0, Math.min(100, n))) });
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1486,7 +1504,7 @@ async function onMessageFromHTMLView(actionType, data) {
         }
         try { DataStore.updateCache(srcNote, true); } catch (e) { }
         try { DataStore.updateCache(tgtNote, true); } catch (e) { }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1510,7 +1528,7 @@ async function onMessageFromHTMLView(actionType, data) {
           try { rNote.updateParagraph(rPara); } catch (e) { console.log('Roadmap: remove dep updateParagraph failed: ' + e); }
           try { DataStore.updateCache(rNote, true); } catch (e) { }
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1524,7 +1542,7 @@ async function onMessageFromHTMLView(actionType, data) {
           list.push(msg.prerequisite);
           writeFrontmatterPatch(noteA, { prerequisites: list.join(', ') });
         }
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1536,7 +1554,7 @@ async function onMessageFromHTMLView(actionType, data) {
         var newR = [];
         for (var i = 0; i < listR.length; i++) if (listR[i] !== msg.prerequisite) newR.push(listR[i]);
         writeFrontmatterPatch(noteR, { prerequisites: newR.length ? newR.join(', ') : '' });
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
       }
 
@@ -1545,7 +1563,7 @@ async function onMessageFromHTMLView(actionType, data) {
         break;
 
       case 'requestRefresh':
-        await pushRefresh();
+        await pushRefresh(replyWindowID);
         break;
 
       default:
@@ -1623,6 +1641,7 @@ async function onUpdateOrInstall() {
 // ============================================
 
 globalThis.showRoadmap = showRoadmap;
+globalThis.showRoadmapWindow = showRoadmapWindow;
 globalThis.refreshRoadmap = refreshRoadmap;
 globalThis.onMessageFromHTMLView = onMessageFromHTMLView;
 globalThis.toggleRoadmapCommand = toggleRoadmapCommand;

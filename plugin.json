@@ -58,7 +58,7 @@
   ],
   "plugin.commands": [
     {
-      "name": "Roadmap",
+      "name": "Open in sidebar",
       "alias": ["roadmap", "gantt", "timeline"],
       "description": "Open the Roadmap Gantt chart",
       "jsFunction": "showRoadmap",
@@ -68,6 +68,12 @@
         "icon": "fa-chart-gantt",
         "iconColor": "#0EA5E9"
       }
+    },
+    {
+      "name": "Open in separate window",
+      "alias": ["roadmap", "gantt", "timeline"],
+      "description": "Open the Roadmap in a separate window",
+      "jsFunction": "showRoadmapWindow"
     },
     {
       "name": "onMessageFromHTMLView",

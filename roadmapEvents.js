@@ -1,12 +1,26 @@
 // asktru.Roadmap — roadmapEvents.js
 // Gantt rendering, drag/resize, dependency editing, persistence via plugin messages.
-/* global sendMessageToPlugin, ROADMAP_DATA */
+/* global sendMessageToPlugin, ROADMAP_DATA, npWindowID */
 // IIFE wraps state but `onMessageFromPlugin` is hoisted to global so the comms bridge can find it.
 
 var onMessageFromPlugin;
 
 (function () {
   'use strict';
+
+  // receivingPluginID and npWindowID are set in the inline script before the bridge
+  // loads. Route every outgoing message through sendToPlugin so each payload carries
+  // the originating window's ID; the plugin replies to that window (sidebar embed vs.
+  // separate floating window). sendMessageToPlugin is `const` in the bridge and can't
+  // be monkey-patched, so we wrap it.
+  function sendToPlugin(action, data) {
+    try {
+      var d = data ? JSON.parse(data) : {};
+      if (typeof npWindowID !== 'undefined' && npWindowID && d._windowID === undefined) d._windowID = npWindowID;
+      data = JSON.stringify(d);
+    } catch (e) {}
+    return sendMessageToPlugin(action, data);
+  }
 
   // ============================================
   // STATE
@@ -832,7 +846,7 @@ var onMessageFromPlugin;
     drag.bar.classList.remove('dragging');
     if (drag.moved && drag.pendingStart && drag.pendingEnd) {
       if (drag.kind === 'task') {
-        sendMessageToPlugin('scheduleTask', JSON.stringify({
+        sendToPlugin('scheduleTask', JSON.stringify({
           filename: drag.filename,
           lineIndex: drag.lineIndex,
           date: partsToISO(drag.pendingStart),
@@ -842,13 +856,13 @@ var onMessageFromPlugin;
         var patch = { id: drag.id };
         if (drag.mode === 'move' || drag.mode === 'resize-left') patch.start = partsToISO(drag.pendingStart);
         if (drag.mode === 'move' || drag.mode === 'resize-right') patch.end = partsToISO(drag.pendingEnd);
-        sendMessageToPlugin('updateDates', JSON.stringify(patch));
+        sendToPlugin('updateDates', JSON.stringify(patch));
         showToast('Updated dates · ' + partsToISO(drag.pendingStart) + ' → ' + partsToISO(drag.pendingEnd));
       }
     } else if (!drag.moved) {
       // Click: open underlying note
       var idx = indexOfId(drag.id);
-      if (idx >= 0) sendMessageToPlugin('openNote', JSON.stringify({ filename: items[idx].filename, title: items[idx].title }));
+      if (idx >= 0) sendToPlugin('openNote', JSON.stringify({ filename: items[idx].filename, title: items[idx].title }));
     }
     drag = null;
   }
@@ -933,7 +947,7 @@ var onMessageFromPlugin;
 
     if (rd.kind === 'task') {
       var it = items[rd.rowIdx];
-      sendMessageToPlugin('scheduleTask', JSON.stringify({
+      sendToPlugin('scheduleTask', JSON.stringify({
         filename: it.filename,
         lineIndex: it.lineIndex,
         date: partsToISO(rd.startDate),
@@ -942,7 +956,7 @@ var onMessageFromPlugin;
     } else {
       var s = rd.startDate, e = rd.endDate;
       if (comparePartsLT(e, s)) { var tmp = s; s = e; e = tmp; }
-      sendMessageToPlugin('updateDates', JSON.stringify({
+      sendToPlugin('updateDates', JSON.stringify({
         id: rd.itemId,
         start: partsToISO(s),
         end: partsToISO(e),
@@ -999,7 +1013,7 @@ var onMessageFromPlugin;
         var sourceIsTask = source && source.kind === 'task';
         var targetIsTask = target && target.kind === 'task';
         if (sourceIsTask && targetIsTask) {
-          sendMessageToPlugin('addTaskDependency', JSON.stringify({
+          sendToPlugin('addTaskDependency', JSON.stringify({
             sourceFilename: source.filename,
             sourceLineIndex: source.lineIndex,
             targetFilename: target.filename,
@@ -1007,7 +1021,7 @@ var onMessageFromPlugin;
           }));
           showToast('Linked task → task');
         } else if (!sourceIsTask && !targetIsTask) {
-          sendMessageToPlugin('addPrerequisite', JSON.stringify({
+          sendToPlugin('addPrerequisite', JSON.stringify({
             id: targetId, prerequisite: sourceId,
           }));
           showToast('Linked: ' + sourceId + ' → ' + targetId);
@@ -1035,13 +1049,13 @@ var onMessageFromPlugin;
       if (!tgtItem || !tgtItem.prereqBlockIds) return;
       var blockId = tgtItem.prereqBlockIds[source];
       if (!blockId) return;
-      sendMessageToPlugin('removeTaskDependency', JSON.stringify({
+      sendToPlugin('removeTaskDependency', JSON.stringify({
         filename: tgtItem.filename,
         lineIndex: tgtItem.lineIndex,
         blockId: blockId,
       }));
     } else {
-      sendMessageToPlugin('removePrerequisite', JSON.stringify({
+      sendToPlugin('removePrerequisite', JSON.stringify({
         id: target, prerequisite: source,
       }));
     }
@@ -1187,7 +1201,7 @@ var onMessageFromPlugin;
     if (swatch) {
       var color = swatch.getAttribute('data-color') || '';
       hideContextMenu();
-      sendMessageToPlugin('setColor', JSON.stringify({
+      sendToPlugin('setColor', JSON.stringify({
         id: targetId, filename: targetFilename, color: color,
       }));
       return;
@@ -1200,7 +1214,7 @@ var onMessageFromPlugin;
     var payload = { id: targetId, filename: targetFilename };
     var li = menu.dataset.targetLineIndex;
     if (li !== '') payload.lineIndex = li;
-    sendMessageToPlugin(action, JSON.stringify(payload));
+    sendToPlugin(action, JSON.stringify(payload));
   }
 
   function onSidebarMouseMove(ev) {
@@ -1228,7 +1242,7 @@ var onMessageFromPlugin;
       renderAll();
       // Persist for next session (does not block the UI; no refresh follows).
       var arr = Object.keys(collapsedSet);
-      sendMessageToPlugin('savePrefs', JSON.stringify({ collapsedIds: JSON.stringify(arr) }));
+      sendToPlugin('savePrefs', JSON.stringify({ collapsedIds: JSON.stringify(arr) }));
       return;
     }
     var row = ev.target.closest('.rm-sidebar-row');
@@ -1238,7 +1252,7 @@ var onMessageFromPlugin;
     var kind = row.getAttribute('data-kind');
     if (ev.metaKey || ev.ctrlKey || ev.altKey) {
       // For tasks, the underlying file is the same; opening still works.
-      sendMessageToPlugin('openNote', JSON.stringify({ filename: filename }));
+      sendToPlugin('openNote', JSON.stringify({ filename: filename }));
       return;
     }
     var idx = indexOfId(id);
@@ -1373,7 +1387,7 @@ var onMessageFromPlugin;
       siblings.splice(refIdx, 0, draggedId);
     }
 
-    sendMessageToPlugin('reorderItems', JSON.stringify({
+    sendToPlugin('reorderItems', JSON.stringify({
       parentId: newParentId,
       orderedIds: siblings,
     }));
@@ -1399,7 +1413,7 @@ var onMessageFromPlugin;
     zoom = newZoom;
     document.querySelectorAll('.rm-zoom-btn').forEach(function (n) { n.classList.remove('active'); });
     btn.classList.add('active');
-    sendMessageToPlugin('savePrefs', JSON.stringify({ lastZoom: zoom }));
+    sendToPlugin('savePrefs', JSON.stringify({ lastZoom: zoom }));
     renderAll();
     scrollToToday();
   }
@@ -1577,7 +1591,7 @@ var onMessageFromPlugin;
         document.body.classList.remove('rm-resizing');
         document.removeEventListener('mousemove', moveR);
         document.removeEventListener('mouseup', endR);
-        sendMessageToPlugin('savePrefs', JSON.stringify({ sidebarWidth: finalW }));
+        sendToPlugin('savePrefs', JSON.stringify({ sidebarWidth: finalW }));
       }
     }
 
@@ -1591,7 +1605,7 @@ var onMessageFromPlugin;
     if (showDoneBtn) showDoneBtn.addEventListener('click', function () {
       var newVal = !showDoneBtn.classList.contains('active');
       showDoneBtn.classList.toggle('active', newVal);
-      sendMessageToPlugin('toggleShowCompletedTasks', JSON.stringify({ value: newVal }));
+      sendToPlugin('toggleShowCompletedTasks', JSON.stringify({ value: newVal }));
     });
 
 
@@ -1603,7 +1617,7 @@ var onMessageFromPlugin;
         saveT = setTimeout(function () {
           var midX = canvasWrap.scrollLeft + canvasWrap.clientWidth / 2;
           var midDate = xToDate(midX);
-          sendMessageToPlugin('savePrefs', JSON.stringify({ lastScrollDate: partsToISO(midDate) }));
+          sendToPlugin('savePrefs', JSON.stringify({ lastScrollDate: partsToISO(midDate) }));
         }, 600);
       });
     }
