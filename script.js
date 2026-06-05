@@ -9,6 +9,35 @@ var WINDOW_ID_FLOATING = 'asktru.Roadmap.dashboardWindow';
 // SETTINGS
 // ============================================
 
+// Insert task paragraph(s) above a "## Done" section (created by NotePlan's
+// "Move Completed to Bottom") so incomplete tasks don't land among completed
+// ones. Falls back to appending at the note bottom when there's no Done section.
+// items: array of { content, type }. Returns the line index of the first item.
+function insertTasksAboveDone(note, items) {
+  if (!items || !items.length) return -1;
+  var paras = note.paragraphs || [];
+  var doneIdx = -1;
+  for (var i = 0; i < paras.length; i++) {
+    var p = paras[i];
+    if (p.type === 'title' && p.headingLevel === 2 && (p.content || '').trim() === 'Done') { doneIdx = i; break; }
+  }
+  if (doneIdx < 0) {
+    var startIdx = paras.length;
+    for (var a = 0; a < items.length; a++) note.appendParagraph(items[a].content, items[a].type);
+    return startIdx;
+  }
+  var firstEmpty = doneIdx;
+  while (firstEmpty > 0 && paras[firstEmpty - 1].type === 'empty') firstEmpty--;
+  var hadBlank = firstEmpty < doneIdx;
+  var idx = firstEmpty;
+  for (var b = 0; b < items.length; b++) {
+    note.insertParagraph(items[b].content, idx, items[b].type);
+    idx++;
+  }
+  if (!hadBlank) note.insertParagraph('', idx, 'empty');
+  return firstEmpty;
+}
+
 function getSettings() {
   var s = DataStore.settings || {};
   var excl = (s.foldersToExclude || '@Archive, @Trash, @Templates')
@@ -1386,7 +1415,7 @@ async function onMessageFromHTMLView(actionType, data) {
         var title = await CommandBar.showInput('Task title', "Add '%@'");
         if (title && String(title).trim()) {
           var content = String(title).trim();
-          if (actionType === 'appendTask') note.appendParagraph(content, 'open');
+          if (actionType === 'appendTask') insertTasksAboveDone(note, [{ content: content, type: 'open' }]);
           else note.prependParagraph(content, 'open');
           try { DataStore.updateCache(note, true); } catch (e) { }
         }
