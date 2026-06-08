@@ -1,5 +1,13 @@
 # What's changed in 🗺 Roadmap plugin?
 
+## [1.1.0] 2026-06-07
+### New
+- **Open in separate window** command with per-window reply routing.
+- np.Shared is auto-installed on install/update.
+
+### Changes
+- Appended tasks are inserted above the `## Done` section.
+
 ## [1.0.0] 2026-05-20
 - Initial release: **Roadmap** command to open an interactive Gantt chart of project notes driven by frontmatter (`roadmap`, `start`, `end`, `due`, `defer`, `prerequisites`, `progress`).
 - Drag-movable bars and edge-resizable spans; progress auto-computed from task counts when not set explicitly.

@@ -8,7 +8,7 @@ deferred starts, and live progress derived from your tasks.
 
 ## Quick start
 
-1. Install the plugin and pin **Roadmap** from the sidebar (or run `/Roadmap`).
+1. Install the plugin and run **Open in sidebar** (alias `/roadmap`), or pin it from the sidebar.
 2. Add a `roadmap:` key to any project note's frontmatter:
 
    ```yaml
