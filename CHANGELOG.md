@@ -1,5 +1,9 @@
 # What's changed in 🗺 Roadmap plugin?
 
+## [1.1.1] 2026-10-10
+### Fixes
+- `@remind(...)` tags (NotePlan's Apple Reminders link) are hidden from task titles on the roadmap.
+
 ## [1.1.0] 2026-06-07
 ### New
 - **Open in separate window** command with per-window reply routing.

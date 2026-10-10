@@ -379,6 +379,8 @@ var SCHEDULED_RX = />(\d{4}-\d{2}-\d{2})\b/;
 var AFTER_RX = /@after\(([^)]+)\)/g;
 // Standalone block-ID tokens that NotePlan appends at the end of a task line.
 var BLOCK_ID_TOKEN_RX = /\s*\^[A-Za-z0-9]+/g;
+// NotePlan Apple Reminders link: @remind, @remind(args) or linked @remind(args:::reminderId)
+var REMIND_RX = /\s*@remind(?:\([^()]*\)|(?![\w(]))/g;
 
 function extractScheduledFromContent(content) {
   if (!content) return '';
@@ -409,6 +411,7 @@ function normalizeBlockId(raw) {
 
 function stripTaskMarkers(content) {
   return String(content || '')
+    .replace(REMIND_RX, '')
     .replace(/>(\d{4}-\d{2}-\d{2})\b/g, '')
     .replace(/@done\([^)]*\)/g, '')
     .replace(/@after\([^)]*\)/g, '')
